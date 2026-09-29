@@ -1,0 +1,47 @@
+{
+  "name": "@cyqmq/cs2-inventory-worker-api",
+  "version": "5.0.0",
+  "description": "CS2 Inventory Simulator - lightweight JSON API on Cloudflare Workers (D1 / Hyperdrive + PostgreSQL)",
+  "type": "module",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
+    "build:data": "npx tsx scripts/generate-economy-data.ts",
+    "predeploy": "npm run build:data",
+    "db:migrate:d1:local": "wrangler d1 migrations apply cs2-inventory-db --local",
+    "db:migrate:d1:remote": "wrangler d1 migrations apply cs2-inventory-db --remote",
+    "db:migrate:pg": "npx tsx scripts/apply-migrations-pg.ts",
+    "db:seed:rules": "npx tsx scripts/seed-rules.ts",
+    "db:seed:rules:d1:local": "npx tsx scripts/seed-rules.ts --d1-local",
+    "db:seed:rules:d1:remote": "npx tsx scripts/seed-rules.ts --d1-remote",
+    "build:size": "wrangler deploy --dry-run --outdir dist"
+  },
+  "dependencies": {
+    "@ianlucas/cs2-lib": "^8.2.0",
+    "@ianlucas/cs2-lib-inspect": "^8.1.0",
+    "hono": "^4.13.10",
+    "kysely": "^0.29.6",
+    "kysely-d1": "^0.4.0",
+    "kysely-postgres-js": "^5.0.1",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260926.1",
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.23.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260926.1": true,
+    "esbuild@0.28.2": true
+  }
+}

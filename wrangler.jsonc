@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cs2-inventory-worker-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // Secrets belong in the dashboard / .dev.vars, not here.
+    "SOURCE_COMMIT": ""
+  },
+  // SQLite (free tier) — uncomment the database_id after `wrangler d1 create cs2-inventory-db`.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cs2-inventory-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+  // Hyperdrive (PostgreSQL, paid tier) — uncomment and remove the D1 block above.
+  // "hyperdrive": [
+  //   {
+  //     "binding": "HYPERDRIVE",
+  //     "id": "<hyperdrive-id>"
+  //   }
+  // ]
+}

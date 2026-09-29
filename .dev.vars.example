@@ -1,0 +1,46 @@
+# Copy to .dev.vars for `wrangler dev`. All values are required unless marked optional.
+
+# Used to sign the HttpOnly `_session` cookie (HMAC-SHA256). Generate one, e.g.
+#   npx node -e "console.log(crypto.randomUUID() + crypto.randomUUID())"
+SESSION_SECRET=replace-with-a-long-random-string
+
+# Must match the Electron app. Generate a random value.
+ELECTRON_AUTH_SECRET=replace-with-a-random-value
+
+# Steam Web API key. Optional when registered as a rule (`steamApiKey`),
+# but sign-in via Steam requires a real key.
+STEAM_API_KEY=optional-steam-web-api-key
+
+# Public callback URL for Steam OpenID, e.g. https://api.example.com/sign-in/steam/callback
+STEAM_CALLBACK_URL=http://localhost:8787/sign-in/steam/callback
+
+# Frontend origin used for post-auth redirects and CORS, e.g. https://inventory.example.com
+# Optional: when unset, sign-in callbacks redirect to "/api/action/preferences".
+FRONTEND_URL=
+
+# CORS: comma separated extra origins (beyond FRONTEND_URL) allowed to call the API.
+CORS_ORIGINS=
+
+# Comma separated hostnames trusted for the 3D viewer origin check (dev/staging).
+# "localhost" and "127.0.0.1" are always trusted.
+TRUSTED_HOSTNAMES=
+
+# 3D viewer settings (optional).
+VIEWER_EMBED_URL=https://3d.cstrike.app/view
+VIEWER_ASSETS_BASE_URL=
+VIEWER_KEY=
+
+# Web app assets (CDN base URL for item images, optional).
+ASSETS_BASE_URL=
+
+# Cloudflare Analytics beacon token (optional).
+CLOUDFLARE_ANALYTICS_TOKEN=
+
+# Deploy commit hash, reported by /api/init as `sourceCommit`.
+SOURCE_COMMIT=
+
+# Set to "false" to send the session cookie without the Secure flag (HTTP dev envs).
+SESSION_SECURE_COOKIE=true
+
+# Only used by scripts/ (apply-migrations-pg.ts, seed-rules.ts) for PostgreSQL deployments.
+DATABASE_URL=
