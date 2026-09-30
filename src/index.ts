@@ -14,11 +14,12 @@ import { signIn, signInCallback } from "./routes/sign-in";
 import { steamCallback } from "./routes/steam-callback";
 import { electronAuth, electronConfig } from "./routes/electron";
 import { users } from "./routes/users";
-import { user } from "./routes/user";
+import { user, userBasic } from "./routes/user";
 import { inventory, equippedV4, equippedV5 } from "./routes/inventory";
 import { addItem } from "./routes/add-item";
 import { addContainer } from "./routes/add-container";
 import { incrementItemStatTrak } from "./routes/increment-item-stattrak";
+import { consumeItemSpray } from "./routes/consume-item-spray";
 import {
   importInspectLink,
   resetInventory,
@@ -136,10 +137,14 @@ app.all("/sign-in/steam/callback", steamCallback);
 app.all("/api/auth/electron", electronAuth);
 app.all("/api/auth/electron-config", electronConfig);
 app.all("/api/users", users);
+// Registered before /api/user/:userId; the two never overlap (basic/ has an
+// extra path segment), the order is just for readability.
+app.all("/api/user/basic/:userId", userBasic);
 app.all("/api/user/:userId", user);
 app.all("/api/add-item", addItem);
 app.all("/api/add-container", addContainer);
 app.all("/api/increment-item-stattrak", incrementItemStatTrak);
+app.all("/api/consume-item-spray", consumeItemSpray);
 app.all("/api/action/sync", sync);
 app.all("/api/action/resync", resync);
 app.all("/api/action/reset-inventory", resetInventory);

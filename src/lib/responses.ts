@@ -5,6 +5,7 @@
 export const noContent = new Response(null, { status: 204 });
 export const badRequest = new Response(null, { status: 400 });
 export const unauthorizedResponse = new Response(null, { status: 401 });
+export const forbiddenResponse = new Response(null, { status: 403 });
 export const notFoundResponse = new Response(null, { status: 404 });
 export const methodNotAllowed = new Response(null, { status: 405 });
 export const conflict = new Response(null, { status: 409 });

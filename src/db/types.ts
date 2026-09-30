@@ -81,6 +81,14 @@ export interface GroupRuleRow {
   value: string;
 }
 
+export interface RateLimitBucketRow {
+  key: string;
+  /** Remaining tokens, kept fractional between refills (upstream: Float). */
+  tokens: number;
+  /** Unix epoch milliseconds of the last refill/consume. */
+  updatedAt: number;
+}
+
 export interface Database {
   User: UserRow;
   UserCache: UserCacheRow;
@@ -92,4 +100,5 @@ export interface Database {
   Group: GroupRow;
   UserGroup: UserGroupRow;
   GroupRule: GroupRuleRow;
+  RateLimitBucket: RateLimitBucketRow;
 }

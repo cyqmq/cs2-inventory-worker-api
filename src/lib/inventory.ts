@@ -6,6 +6,7 @@
 import {
   CS2Inventory,
   CS2ItemType,
+  decodeInventoryData,
   type CS2InventoryItem
 } from "@ianlucas/cs2-lib";
 import { serverInventoryShape } from "./shapes";
@@ -53,9 +54,20 @@ export interface ItemEditorAttributes {
   wear?: number;
 }
 
+/**
+ * Loads raw inventory JSON into a spec object for `new CS2Inventory(...)`.
+ * v9 replaced the v8 `CS2Inventory.parse` with `CS2Inventory.load`, which both
+ * decodes and migrates (v1 → v2) and repairs/drops invalid items; passing the
+ * decoded data through the constructor keeps those semantics while letting the
+ * callers shape options themselves.
+ */
 export function parseInventory(inventory?: string | null) {
+  if (inventory === undefined || inventory === null) {
+    return undefined;
+  }
   try {
-    return serverInventoryShape.parse(CS2Inventory.parse(inventory));
+    const { data } = decodeInventoryData(inventory);
+    return serverInventoryShape.parse(data);
   } catch {
     return undefined;
   }

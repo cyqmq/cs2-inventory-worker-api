@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  CS2 Inventory Simulator — POST /api/increment-item-stattrak
- *  Port of api.increment-item-stattrak._index.tsx.
+ *  CS2 Inventory Simulator — POST /api/consume-item-spray
+ *  Port of api.consume-item-spray._index.tsx.
  *--------------------------------------------------------------------------------------------*/
 
 import { assert } from "@ianlucas/cs2-lib";
@@ -9,14 +9,14 @@ import type { Context } from "hono";
 import { middleware } from "../middleware";
 import {
   API_SCOPE,
-  STATTRAK_INCREMENT_SCOPE,
+  SPRAY_CONSUME_SCOPE,
   isApiKeyValid
 } from "../models/api-credential";
 import {
-  STATTRAK_INCREMENT_RATE_LIMIT,
+  SPRAY_CONSUME_RATE_LIMIT,
   consumeRateLimitToken
 } from "../lib/token-bucket";
-import { apiPublicStatTrakIncrement } from "../models/rule";
+import { apiPublicSprayConsume } from "../models/rule";
 import {
   existsUser,
   findUniqueUser,
@@ -31,7 +31,7 @@ import {
 } from "../lib/responses";
 import { nonNegativeInt } from "../lib/shapes";
 
-export async function incrementItemStatTrak(c: Context) {
+export async function consumeItemSpray(c: Context) {
   const request = c.req.raw;
   await middleware(request);
   if (request.method !== "POST") {
@@ -46,17 +46,17 @@ export async function incrementItemStatTrak(c: Context) {
     .parse(await request.json());
 
   if (apiKey !== undefined) {
-    if (!(await isApiKeyValid(apiKey, [API_SCOPE, STATTRAK_INCREMENT_SCOPE]))) {
+    if (!(await isApiKeyValid(apiKey, [API_SCOPE, SPRAY_CONSUME_SCOPE]))) {
       throw unauthorizedResponse;
     }
   } else {
-    if (!(await apiPublicStatTrakIncrement.for(userId).get())) {
+    if (!(await apiPublicSprayConsume.for(userId).get())) {
       throw unauthorizedResponse;
     }
     if (
       !(await consumeRateLimitToken(
-        `stattrak:${userId}:${targetUid}`,
-        STATTRAK_INCREMENT_RATE_LIMIT
+        `spray:${userId}:${targetUid}`,
+        SPRAY_CONSUME_RATE_LIMIT
       ))
     ) {
       throw tooManyRequests;
@@ -77,12 +77,9 @@ export async function incrementItemStatTrak(c: Context) {
       userId,
       manipulate(inventory) {
         const item = inventory.get(targetUid);
-        assert(
-          item.equipped === true ||
-            item.equippedCT === true ||
-            item.equippedT === true
-        );
-        inventory.incrementItemStatTrak(targetUid);
+        assert(item.isGraffiti());
+        assert(item.equipped === true);
+        inventory.consumeItemCharges(targetUid);
       }
     });
     return noContent;

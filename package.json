@@ -21,8 +21,8 @@
     "build:size": "wrangler deploy --dry-run --outdir dist"
   },
   "dependencies": {
-    "@ianlucas/cs2-lib": "^8.2.0",
-    "@ianlucas/cs2-lib-inspect": "^8.1.0",
+    "@ianlucas/cs2-lib": "^9.4.0",
+    "@ianlucas/cs2-lib-inspect": "^9.0.0",
     "hono": "^4.13.10",
     "kysely": "^0.29.6",
     "kysely-d1": "^0.4.0",

@@ -7,10 +7,16 @@
  *  Worker bindings are only available inside the fetch handler.
  *--------------------------------------------------------------------------------------------*/
 
-import { assert, fail } from "@ianlucas/cs2-lib";
+import {
+  CS2_MAX_PATCHES,
+  CS2_MAX_STICKERS,
+  assert,
+  fail
+} from "@ianlucas/cs2-lib";
 import { z } from "zod";
 import { db } from "../db/database";
 import { getRuntime } from "../env";
+import { resolveMaxAttachments } from "../lib/attachments";
 
 class RuleFor<RuleValue> {
   constructor(private value: Promise<RuleValue>) {}
@@ -46,18 +52,22 @@ export class Rule<RuleName extends string, RuleValue> {
             ? "number-array"
             : never;
   public name: RuleName;
+  private transform?: (value: unknown) => unknown;
 
   constructor({
     defaultValue,
     name,
+    transform,
     type
   }: {
     defaultValue: RuleValue;
     name: RuleName;
+    transform?: (value: RuleValue) => RuleValue;
     type: Rule<RuleName, RuleValue>["type"];
   }) {
     this.defaultValue = defaultValue;
     this.name = name;
+    this.transform = transform as ((value: unknown) => unknown) | undefined;
     this.type = type;
     Rule.instances.push(this);
   }
@@ -143,7 +153,9 @@ export class Rule<RuleName extends string, RuleValue> {
     let strValue = String(value);
     switch (this.type) {
       case "number":
-        assert(strValue.match(/^\d+$/) !== null);
+        // Negative values are meaningful for the attachment limits (-1 =
+        // "use the game's maximum"), so the sign is part of the grammar.
+        assert(strValue.match(/^-?\d+$/) !== null);
         break;
 
       case "boolean":
@@ -179,6 +191,13 @@ export class Rule<RuleName extends string, RuleValue> {
       .execute();
   }
 
+  /** Applies the rule's transform, if any (app/utils/attachments.ts semantics). */
+  private toRuleValue(value: RuleValue): RuleValue {
+    return this.transform !== undefined
+      ? (this.transform(value) as RuleValue)
+      : value;
+  }
+
   async get() {
     const value = (
       await db()
@@ -188,19 +207,21 @@ export class Rule<RuleName extends string, RuleValue> {
         .executeTakeFirst()
     )?.value;
     if (value !== undefined) {
-      return this.toValue(value);
+      return this.toRuleValue(this.toValue(value));
     }
     if (this.defaultValueProvider !== undefined) {
-      return this.defaultValueProvider();
+      return this.toRuleValue(this.defaultValueProvider());
     }
-    return this.defaultValue;
+    return this.toRuleValue(this.defaultValue);
   }
 
   for(userId: string): RuleFor<RuleValue> {
     return new RuleFor(
       this.getUserRuleOverwrite(userId)
         .then((v) => v ?? this.getUserGroupRuleOverwrite(userId))
-        .then((v) => (v !== undefined ? this.toValue(v) : this.get()))
+        .then((v) =>
+          v !== undefined ? this.toRuleValue(this.toValue(v)) : this.get()
+        )
     );
   }
 }
@@ -387,6 +408,20 @@ export const inventoryItemAllowRemoveSticker = new Rule({
   name: "inventoryItemAllowRemoveSticker",
   type: "boolean",
   defaultValue: true
+});
+
+export const inventoryItemMaxPatches = new Rule({
+  name: "inventoryItemMaxPatches",
+  type: "number",
+  defaultValue: -1,
+  transform: (value) => resolveMaxAttachments(value, CS2_MAX_PATCHES)
+});
+
+export const inventoryItemMaxStickers = new Rule({
+  name: "inventoryItemMaxStickers",
+  type: "number",
+  defaultValue: -1,
+  transform: (value) => resolveMaxAttachments(value, CS2_MAX_STICKERS)
 });
 
 export const inventoryItemAllowShare = new Rule({
@@ -671,6 +706,18 @@ export const craftAllowImportInspectLink = new Rule({
   defaultValue: true
 });
 
+export const apiPublicStatTrakIncrement = new Rule({
+  name: "apiPublicStatTrakIncrement",
+  type: "boolean",
+  defaultValue: false
+});
+
+export const apiPublicSprayConsume = new Rule({
+  name: "apiPublicSprayConsume",
+  type: "boolean",
+  defaultValue: false
+});
+
 // ---------------------------------------------------------------------------
 // getRules / getClientRules (api/models/rule.ts)
 // ---------------------------------------------------------------------------
@@ -765,8 +812,12 @@ export async function getClientRules(userId?: string) {
       inventoryItemAllowUnlockContainer,
       inventoryItemEquipHideModel,
       inventoryItemEquipHideType,
+      inventoryItemMaxPatches,
+      inventoryItemMaxStickers,
       inventoryMaxItems,
       inventoryStorageUnitMaxItems,
+      apiPublicSprayConsume,
+      apiPublicStatTrakIncrement,
       viewerAttachmentsOnly,
       viewerEnabled,
       viewerKey

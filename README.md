@@ -123,7 +123,7 @@ schema 的 SQLite / PostgreSQL 两个方言版本。
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
 | GET | `/healthz` | — | 健康检查（返回 `Supposedly healthy`） |
-| GET | `/api/init` | Cookie* | 客户端初始化数据（rules / preferences / user） |
+| GET | `/api/init` | Cookie* | 客户端初始化数据（rules / preferences / user），含 `rules.viewer`（服务端 3D viewer 判定） |
 | POST | `/api/sign-in` | — | API Key 登录，失败/空 body 返回 400 |
 | GET | `/api/sign-in/callback` | — | Steam OAuth 回调（带 `id_res`/`code`） |
 | GET | `/sign-in/steam/callback` | — | Steam OpenID 回调入口（无参请求返回 302 跳转 Steam） |
@@ -136,10 +136,12 @@ schema 的 SQLite / PostgreSQL 两个方言版本。
 | POST | `/api/action/import-inspect-link` | Session | 导入检视链接（带速率限制，需登录） |
 | GET/POST | `/api/action/preferences` | Session | 偏好表单（GET/POST 均 302 + Set-Cookie 写会话） |
 | GET | `/api/users` | API Key | 用户列表 |
+| GET | `/api/user/basic/:userId` | — | 公开；`{ avatar, name }`，用户不存在返回 `null` |
 | GET | `/api/user/:userId` | API Key | 获取单个用户 |
 | POST | `/api/add-item` | API Key | 给用户库存加一件物品（204） |
 | POST | `/api/add-container` | API Key | 给用户库存加一个随机容器（返回容器 JSON） |
-| POST | `/api/increment-item-stattrak` | API Key | StatTrak 计数 +1（204） |
+| POST | `/api/increment-item-stattrak` | API Key 或公开规则 | StatTrak 计数 +1（204）；apiKey 可选，无 key 时需 `apiPublicStatTrakIncrement=true` + 令牌桶（50 容量/每 3.6s 回 1，超限 429），且物品须已装备 |
+| POST | `/api/consume-item-spray` | API Key 或公开规则 | 消耗已装备涂鸦 1 次充能（204）；无 key 时需 `apiPublicSprayConsume=true` + 令牌桶（1 容量/每 30s 回 1，超限 429），且物品须是涂鸦且已装备 |
 | GET | `/api/inventory/:userId.json` | — | 公开库存 JSON（用户不存在返回 200 `{}`） |
 | GET | `/api/equipped/v4/:userId.json` | — | 已装备 v4 JSON |
 | GET | `/api/equipped/v5/:userId.json` | — | 已装备 v5 JSON |
@@ -224,6 +226,14 @@ schema 的 SQLite / PostgreSQL 两个方言版本。
 - 查询层为轻量 Kysely，D1 单写原子更新（`src/models/manipulate-user-inventory` 一次性读改写）
 - 经济数据在首次请求时同步加载进 `CS2Economy`（模块级缓存），不逐请求读库
 - 全部动态路由参数用真实输入，无需正则回绕
+
+### 3D viewer 探测用惰性 TTL 而不是常驻循环
+
+上游 `app/data/viewer.server.ts` 用两个自调度 `setTimeout` 循环保温 viewer 的 catalog 与公开配额，
+并逐请求读缓存。Worker isolate 不能在请求之间持有定时器，因此 `src/lib/viewer.ts` 改成**模块级惰性
+TTL 状态机**：首次请求限时等待（catalog 1.5s）后返回，过期时 stale-while-revalidate 后台刷新。
+`reason` 名称、优先级顺序与 fail-closed 语义与上游一致；差异只在于冷启动后的第一个请求可能拿到
+`pending`，而不会像上游那样一直阻塞到探测成功。
 
 ### 语言回退为英文（`add-container`）
 

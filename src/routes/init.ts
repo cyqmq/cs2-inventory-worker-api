@@ -15,7 +15,7 @@ import { getToggleable } from "../preferences/toggleable";
 import { getSession } from "../lib/session";
 import { nonEmptyString } from "../lib/misc";
 import { getRuntime } from "../env";
-import { resolveViewerCatalog, resolveViewerOriginAllowed } from "../lib/viewer";
+import { resolveViewerRuntime } from "../lib/viewer";
 import { getUserPreferences } from "../models/user-preference";
 import { languages } from "../lib/languages";
 
@@ -37,6 +37,9 @@ export async function init(c: Context) {
     await steamCallbackUrl.get()
   );
   const clientRules = await getClientRules(user?.id);
+  const viewer = await resolveViewerRuntime({
+    enabled: clientRules.viewerEnabled
+  });
   const env = getRuntime().env;
 
   let preferences;
@@ -80,14 +83,11 @@ export async function init(c: Context) {
       viewerAssetsBaseUrl: nonEmptyString(env.VIEWER_ASSETS_BASE_URL),
       cloudflareAnalyticsToken: nonEmptyString(env.CLOUDFLARE_ANALYTICS_TOKEN),
       sourceCommit: env.SOURCE_COMMIT,
-      viewerOriginAllowed: resolveViewerOriginAllowed({
-        enabled: clientRules.viewerEnabled,
-        hostname: new URL(appUrl).hostname,
-        key: clientRules.viewerKey
-      }),
-      viewerCatalog: clientRules.viewerEnabled
-        ? await resolveViewerCatalog()
-        : undefined,
+      viewerOriginAllowed: viewer.originAllowed,
+      viewerCatalog: clientRules.viewerEnabled ? viewer.catalog : undefined,
+      // Always sent, like upstream's root loader (which publishes the verdict
+      // for disabled deployments too, as `{ available: false, reason: "disabled" }`).
+      viewer: viewer.status,
       meta: { appUrl, appSiteName }
     },
     preferences,

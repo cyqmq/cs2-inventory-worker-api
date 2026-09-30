@@ -11,9 +11,12 @@ import {
   CS2Economy,
   CS2EconomyItem,
   CS2Inventory,
+  CS2InventoryItem,
   CS2ItemType,
   CS2UnlockedItem,
   RecordValue,
+  assert,
+  repairInventoryItem,
   truncateToFactor
 } from "@ianlucas/cs2-lib";
 import {
@@ -72,6 +75,8 @@ import {
   inventoryItemAllowRemoveSticker,
   inventoryItemAllowScrapeSticker,
   inventoryItemAllowUnlockContainer,
+  inventoryItemMaxPatches,
+  inventoryItemMaxStickers,
   inventoryMaxItems,
   inventoryStorageUnitMaxItems
 } from "../models/rule";
@@ -82,9 +87,11 @@ import {
 import {
   badRequest,
   conflict,
+  forbiddenResponse,
   methodNotAllowed,
   tooManyRequests
 } from "../lib/responses";
+import { isAttachmentCountAllowed } from "../lib/attachments";
 import { frontendRedirect } from "../lib/redirect";
 import { editInventoryItem, parseInventory, type ItemEditorAttributes } from "../lib/inventory";
 import { hasKeys } from "../lib/misc";
@@ -245,20 +252,50 @@ type ApiActionSyncData = {
   syncedAt: number;
 };
 
+/**
+ * Rejects an item / set of attributes carrying more attachments than the
+ * inventoryItemMaxPatches / inventoryItemMaxStickers rules allow. `target` is
+ * the item being edited, so lowering a limit never destroys what is already
+ * there (see isAttachmentCountAllowed).
+ */
+async function enforceMaxAttachments(
+  {
+    patches,
+    stickers
+  }: Pick<Partial<CS2BaseInventoryItem>, "patches" | "stickers">,
+  userId: string,
+  target?: CS2InventoryItem
+) {
+  assert(
+    isAttachmentCountAllowed({
+      current: target?.getPatchesCount() ?? 0,
+      max: await inventoryItemMaxPatches.for(userId).get(),
+      next: patches !== undefined ? Object.keys(patches).length : 0
+    })
+  );
+  assert(
+    isAttachmentCountAllowed({
+      current: target?.getStickersCount() ?? 0,
+      max: await inventoryItemMaxStickers.for(userId).get(),
+      next: stickers !== undefined ? Object.keys(stickers).length : 0
+    })
+  );
+}
+
 async function enforceCraftRulesForItem(
   idOrItem: number | CS2EconomyItem,
   userId: string
 ) {
-  const { category, type, model, id } = CS2Economy.get(idOrItem);
+  const { type, modelKey, id, loadoutCategory } = CS2Economy.get(idOrItem);
   await craftHideId.for(userId).notContains(id);
-  if (category !== undefined) {
-    await craftHideCategory.for(userId).notContains(category);
+  if (loadoutCategory !== undefined) {
+    await craftHideCategory.for(userId).notContains(loadoutCategory);
   }
   if (type !== undefined) {
     await craftHideType.for(userId).notContains(type);
   }
-  if (model !== undefined) {
-    await craftHideModel.for(userId).notContains(model);
+  if (modelKey !== undefined) {
+    await craftHideModel.for(userId).notContains(modelKey);
   }
 }
 
@@ -313,16 +350,11 @@ async function enforceCraftRulesForKeychainAttributes(
 }
 
 async function enforceCraftRulesForInventoryItem(
-  {
-    keychains,
-    stickers,
-    statTrak,
-    wear,
-    seed,
-    nameTag
-  }: Partial<CS2BaseInventoryItem>,
+  item: Partial<CS2BaseInventoryItem>,
   userId: string
 ) {
+  const { keychains, stickers, statTrak, wear, seed, nameTag } = item;
+  await enforceMaxAttachments(item, userId);
   if (keychains !== undefined && hasKeys(keychains)) {
     await craftAllowKeychains.for(userId).truthy();
     await craftHideType.for(userId).notContains(CS2ItemType.Keychain);
@@ -357,16 +389,16 @@ async function enforceEditRulesForItem(
   idOrItem: number | CS2EconomyItem,
   userId: string
 ) {
-  const { category, type, model, id } = CS2Economy.get(idOrItem);
+  const { type, modelKey, id, loadoutCategory } = CS2Economy.get(idOrItem);
   await editHideId.for(userId).notContains(id);
-  if (category !== undefined) {
-    await editHideCategory.for(userId).notContains(category);
+  if (loadoutCategory !== undefined) {
+    await editHideCategory.for(userId).notContains(loadoutCategory);
   }
   if (type !== undefined) {
     await editHideType.for(userId).notContains(type);
   }
-  if (model !== undefined) {
-    await editHideModel.for(userId).notContains(model);
+  if (modelKey !== undefined) {
+    await editHideModel.for(userId).notContains(modelKey);
   }
 }
 
@@ -394,16 +426,12 @@ async function enforceEditRulesForKeychainAttributes(
 }
 
 async function enforceEditRulesForInventoryItem(
-  {
-    keychains,
-    stickers,
-    statTrak,
-    wear,
-    seed,
-    nameTag
-  }: Partial<ItemEditorAttributes>,
-  userId: string
+  attributes: Partial<ItemEditorAttributes>,
+  userId: string,
+  target: CS2InventoryItem
 ) {
+  const { keychains, stickers, statTrak, wear, seed, nameTag } = attributes;
+  await enforceMaxAttachments(attributes, userId, target);
   if (keychains !== undefined && hasKeys(keychains)) {
     await editAllowKeychains.for(userId).truthy();
     await editHideType.for(userId).notContains(CS2ItemType.Keychain);
@@ -507,16 +535,33 @@ export async function sync(c: Context) {
               action.nameTag
             );
             break;
-          case SyncAction.ApplyItemPatch:
+          case SyncAction.ApplyItemPatch: {
             await inventoryItemAllowApplyPatch.for(userId).truthy();
+            const count = inventory.get(action.targetUid).getPatchesCount();
+            assert(
+              isAttachmentCountAllowed({
+                current: count,
+                max: await inventoryItemMaxPatches.for(userId).get(),
+                next: count + 1
+              })
+            );
             inventory.applyItemPatch(
               action.targetUid,
               action.patchUid,
               action.slot
             );
             break;
-          case SyncAction.ApplyItemSticker:
+          }
+          case SyncAction.ApplyItemSticker: {
             await inventoryItemAllowApplySticker.for(userId).truthy();
+            const count = inventory.get(action.targetUid).getStickersCount();
+            assert(
+              isAttachmentCountAllowed({
+                current: count,
+                max: await inventoryItemMaxStickers.for(userId).get(),
+                next: count + 1
+              })
+            );
             inventory.applyItemSticker(action.targetUid, action.stickerUid, {
               schema: action.schema,
               x: action.x,
@@ -525,6 +570,7 @@ export async function sync(c: Context) {
               wear: action.wear
             });
             break;
+          }
           case SyncAction.Equip:
             inventory.equip(action.uid, action.team);
             break;
@@ -575,11 +621,22 @@ export async function sync(c: Context) {
             break;
           case SyncAction.Edit:
             await inventoryItemAllowEdit.for(userId).truthy();
-            await enforceEditRulesForInventoryItem(action.attributes, userId);
+            await enforceEditRulesForInventoryItem(
+              action.attributes,
+              userId,
+              inventory.get(action.uid)
+            );
             editInventoryItem(inventory, action.uid, action.attributes);
             break;
           case SyncAction.AddWithSticker:
             await enforceCraftRulesForItem(action.itemId, userId);
+            assert(
+              isAttachmentCountAllowed({
+                current: 0,
+                max: await inventoryItemMaxStickers.for(userId).get(),
+                next: 1
+              })
+            );
             inventory.addWithSticker(action.stickerUid, action.itemId, {
               schema: action.schema,
               x: action.x,
@@ -726,16 +783,30 @@ export async function importInspectLink(c: Context) {
       inspectLink: z.string().refine((value) => isValidInspectLink(value))
     })
     .parse(await request.json());
+  let item: CS2BaseInventoryItem;
   if (isSteamInspectLink(inspectLink)) {
-    return c.json(
-      postParseInventoryItem(
-        parseCSFloatItemInfo(CS2Economy, await fetchCSFloatItemInfo(inspectLink))
-      )
+    item = parseCSFloatItemInfo(
+      CS2Economy,
+      await fetchCSFloatItemInfo(inspectLink)
     );
+  } else {
+    try {
+      item = parseInspectLink(CS2Economy, inspectLink);
+    } catch {
+      throw badRequest;
+    }
   }
-  try {
-    return c.json(postParseInventoryItem(parseInspectLink(CS2Economy, inspectLink)));
-  } catch {
+  // v9: repair clamps invalid attributes (or reports the item unrepairable),
+  // matching upstream's import-inspect-link behavior.
+  if (!repairInventoryItem(CS2Economy, item)) {
     throw badRequest;
   }
+  // The item is not in the inventory yet, so there is no existing count to
+  // preserve: anything above the configured limit is rejected outright.
+  try {
+    await enforceMaxAttachments(item, userId);
+  } catch {
+    throw forbiddenResponse;
+  }
+  return c.json(postParseInventoryItem(item));
 }
