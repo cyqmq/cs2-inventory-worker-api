@@ -38,6 +38,11 @@ export const optionalStickerWear = z
   .finite()
   .optional()
   .refine((value) => value === undefined || validateStickerWear(value));
+export const optionalKeychainOffset = z
+  .number()
+  .finite()
+  .optional()
+  .refine((value) => value === undefined || validateKeychainOffset(value));
 
 export const baseInventoryItemProps = {
   equipped: z.boolean().optional(),

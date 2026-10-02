@@ -100,6 +100,7 @@ import {
   clientInventoryItemShape,
   itemEditorAttributesShape,
   nonNegativeInt,
+  optionalKeychainOffset,
   optionalStickerOffset,
   optionalStickerRotation,
   optionalStickerWear,
@@ -120,25 +121,37 @@ export const ApiActionImportInspectLinkUrl = "/api/action/import-inspect-link";
 const SyncAction = {
   Add: "add",
   AddFromCache: "add-from-cache",
+  AddWithKeychain: "add-with-keychain",
   AddWithNametag: "add-with-nametag",
   AddWithSticker: "add-with-sticker",
+  ApplyItemKeychain: "apply-item-keychain",
   ApplyItemPatch: "apply-item-patch",
   ApplyItemSticker: "apply-item-sticker",
   DepositToStorageUnit: "deposit-to-storage-unit",
   Edit: "edit",
   Equip: "equip",
+  ExtractItemSticker: "extract-item-sticker",
   Remove: "remove",
   RemoveAllItems: "remove-all-items",
+  RemoveItemKeychain: "remove-item-keychain",
   RemoveItemPatch: "remove-item-patch",
   RemoveItemSticker: "remove-item-sticker",
   RenameItem: "rename-item",
   RenameStorageUnit: "rename-storage-unit",
   RetrieveFromStorageUnit: "retrieve-from-storage-unit",
   ScrapeItemSticker: "scrape-item-sticker",
+  SealItemSticker: "seal-item-sticker",
   SwapItemsStatTrak: "swap-items-stattrak",
+  UnpackItem: "unpack-item",
   UnsealItem: "unseal-item",
   Unequip: "unequip"
 } as const;
+
+const keychainPlacementShape = {
+  x: optionalKeychainOffset,
+  y: optionalKeychainOffset,
+  z: optionalKeychainOffset
+};
 
 const stickerPlacementShape = {
   schema: nonNegativeInt,
@@ -164,6 +177,12 @@ const actionShape = z.discriminatedUnion("type", [
     nameTag: z.string()
   }),
   z.object({
+    type: z.literal(SyncAction.ApplyItemKeychain),
+    keychainUid: nonNegativeInt,
+    targetUid: nonNegativeInt,
+    ...keychainPlacementShape
+  }),
+  z.object({
     type: z.literal(SyncAction.ApplyItemPatch),
     patchUid: nonNegativeInt,
     slot: nonNegativeInt,
@@ -174,6 +193,10 @@ const actionShape = z.discriminatedUnion("type", [
     stickerUid: nonNegativeInt,
     targetUid: nonNegativeInt,
     ...stickerPlacementShape
+  }),
+  z.object({
+    type: z.literal(SyncAction.ExtractItemSticker),
+    uid: nonNegativeInt
   }),
   z.object({
     type: z.literal(SyncAction.Equip),
@@ -196,6 +219,11 @@ const actionShape = z.discriminatedUnion("type", [
     uid: nonNegativeInt
   }),
   z.object({
+    type: z.literal(SyncAction.RemoveItemKeychain),
+    targetUid: nonNegativeInt,
+    slot: nonNegativeInt
+  }),
+  z.object({
     type: z.literal(SyncAction.RemoveItemPatch),
     targetUid: nonNegativeInt,
     slot: nonNegativeInt
@@ -214,6 +242,11 @@ const actionShape = z.discriminatedUnion("type", [
     targetUid: nonNegativeInt,
     index: nonNegativeInt,
     wear: optionalStickerWear
+  }),
+  z.object({
+    type: z.literal(SyncAction.SealItemSticker),
+    toolUid: nonNegativeInt,
+    stickerUid: nonNegativeInt
   }),
   z.object({
     type: z.literal(SyncAction.SwapItemsStatTrak),
@@ -242,6 +275,12 @@ const actionShape = z.discriminatedUnion("type", [
     attributes: itemEditorAttributesShape
   }),
   z.object({
+    type: z.literal(SyncAction.AddWithKeychain),
+    itemId: nonNegativeInt,
+    keychainUid: nonNegativeInt,
+    ...keychainPlacementShape
+  }),
+  z.object({
     type: z.literal(SyncAction.AddWithSticker),
     itemId: nonNegativeInt,
     stickerUid: nonNegativeInt,
@@ -249,6 +288,10 @@ const actionShape = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal(SyncAction.RemoveAllItems)
+  }),
+  z.object({
+    type: z.literal(SyncAction.UnpackItem),
+    uid: nonNegativeInt
   })
 ]);
 
@@ -577,8 +620,18 @@ export async function sync(c: Context) {
             });
             break;
           }
+          case SyncAction.ApplyItemKeychain:
+            inventory.applyItemKeychain(action.targetUid, action.keychainUid, {
+              x: action.x,
+              y: action.y,
+              z: action.z
+            });
+            break;
           case SyncAction.Equip:
             inventory.equip(action.uid, action.team);
+            break;
+          case SyncAction.ExtractItemSticker:
+            inventory.unsealStickerSlab(action.uid);
             break;
           case SyncAction.Unequip:
             inventory.unequip(action.uid, action.team);
@@ -596,6 +649,9 @@ export async function sync(c: Context) {
           case SyncAction.Remove:
             inventory.remove(action.uid);
             break;
+          case SyncAction.RemoveItemKeychain:
+            inventory.removeItemKeychain(action.targetUid, action.slot);
+            break;
           case SyncAction.RemoveItemPatch:
             await inventoryItemAllowRemovePatch.for(userId).truthy();
             inventory.removeItemPatch(action.targetUid, action.slot);
@@ -611,6 +667,9 @@ export async function sync(c: Context) {
               action.index,
               action.wear
             );
+            break;
+          case SyncAction.SealItemSticker:
+            inventory.sealStickerSlab(action.toolUid, action.stickerUid);
             break;
           case SyncAction.SwapItemsStatTrak:
             inventory.swapItemsStatTrak(
@@ -656,6 +715,17 @@ export async function sync(c: Context) {
             break;
           case SyncAction.RemoveAllItems:
             inventory.removeAll();
+            break;
+          case SyncAction.AddWithKeychain:
+            await enforceCraftRulesForItem(action.itemId, userId);
+            inventory.addWithKeychain(action.keychainUid, action.itemId, {
+              x: action.x,
+              y: action.y,
+              z: action.z
+            });
+            break;
+          case SyncAction.UnpackItem:
+            inventory.unpackItem(action.uid);
             break;
         }
       }
