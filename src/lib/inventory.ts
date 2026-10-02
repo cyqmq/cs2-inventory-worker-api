@@ -9,7 +9,6 @@ import {
   decodeInventoryData,
   type CS2InventoryItem
 } from "@ianlucas/cs2-lib";
-import { serverInventoryShape } from "./shapes";
 
 export const UNLOCKABLE_ITEM_TYPE: CS2ItemType[] = [
   CS2ItemType.Container,
@@ -60,14 +59,19 @@ export interface ItemEditorAttributes {
  * decodes and migrates (v1 → v2) and repairs/drops invalid items; passing the
  * decoded data through the constructor keeps those semantics while letting the
  * callers shape options themselves.
+ *
+ * Deliberately NOT routed through a zod shape: `z.object()` strips unknown
+ * keys, which silently dropped stored properties the shape didn't declare
+ * (e.g. graffiti `charges` got re-sealed on every read, making equip and
+ * spray consumption fail downstream). Per-item validation is the
+ * constructor's job.
  */
 export function parseInventory(inventory?: string | null) {
   if (inventory === undefined || inventory === null) {
     return undefined;
   }
   try {
-    const { data } = decodeInventoryData(inventory);
-    return serverInventoryShape.parse(data);
+    return decodeInventoryData(inventory).data;
   } catch {
     return undefined;
   }

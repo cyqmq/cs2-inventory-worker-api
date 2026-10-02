@@ -12,6 +12,7 @@ import {
   CS2EconomyItem,
   CS2Inventory,
   CS2InventoryItem,
+  CS2_INVENTORY_VERSION,
   CS2ItemType,
   CS2UnlockedItem,
   RecordValue,
@@ -135,6 +136,7 @@ const SyncAction = {
   RetrieveFromStorageUnit: "retrieve-from-storage-unit",
   ScrapeItemSticker: "scrape-item-sticker",
   SwapItemsStatTrak: "swap-items-stattrak",
+  UnsealItem: "unseal-item",
   Unequip: "unequip"
 } as const;
 
@@ -202,6 +204,10 @@ const actionShape = z.discriminatedUnion("type", [
     type: z.literal(SyncAction.RemoveItemSticker),
     targetUid: nonNegativeInt,
     index: nonNegativeInt
+  }),
+  z.object({
+    type: z.literal(SyncAction.UnsealItem),
+    uid: nonNegativeInt
   }),
   z.object({
     type: z.literal(SyncAction.ScrapeItemSticker),
@@ -577,6 +583,9 @@ export async function sync(c: Context) {
           case SyncAction.Unequip:
             inventory.unequip(action.uid, action.team);
             break;
+          case SyncAction.UnsealItem:
+            inventory.unsealItem(action.uid);
+            break;
           case SyncAction.RenameItem:
             inventory.renameItem(
               action.toolUid,
@@ -723,7 +732,8 @@ export async function unlockCase(c: Context) {
   inventory.unlockContainer(unlockedItem, caseUid, keyUid);
   const { syncedAt: responseSyncedAt } = await updateUserInventory(
     userId,
-    inventory.stringify()
+    inventory.stringify(),
+    CS2_INVENTORY_VERSION
   );
 
   return c.json({

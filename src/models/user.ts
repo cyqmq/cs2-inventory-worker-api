@@ -2,7 +2,10 @@
  *  CS2 Inventory Simulator — user model (port of api/models/user.server.ts)
  *--------------------------------------------------------------------------------------------*/
 
-import { CS2Inventory } from "@ianlucas/cs2-lib";
+import {
+  CS2Inventory,
+  CS2_INVENTORY_VERSION
+} from "@ianlucas/cs2-lib";
 import { db } from "../db/database";
 import { parseInventory } from "../lib/inventory";
 import { badRequest, conflict } from "../lib/responses";
@@ -179,5 +182,12 @@ export async function manipulateUserInventory({
       throw conflict;
     }
   }
-  return await updateUserInventory(userId, inventory.stringify());
+  // Persist the current data version so middleware doesn't re-run the
+  // migration on the next request (a re-run rewrites the row and bumps
+  // syncedAt behind the client's back → spurious 409s).
+  return await updateUserInventory(
+    userId,
+    inventory.stringify(),
+    CS2_INVENTORY_VERSION
+  );
 }
