@@ -38,9 +38,13 @@ export async function removeTrailingSlashes(request: Request) {
 }
 
 export async function isValidApiRequest(request: Request, scope?: string[]) {
-  const apiKey = z
-    .string()
-    .parse(request.headers.get("Authorization")?.replace("Bearer ", ""));
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader === null) {
+    // Missing credentials must be 401, not a ZodError-driven 400. The Zod
+    // branch below still catches a present-but-malformed header.
+    throw unauthorized();
+  }
+  const apiKey = z.string().parse(authHeader.replace("Bearer ", ""));
   if (!(await isApiKeyValid(apiKey, scope))) {
     throw unauthorized();
   }

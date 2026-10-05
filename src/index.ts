@@ -232,7 +232,9 @@ app.onError((error, c) => {
   let errorMessage = "Internal server error";
   let logError = true;
   let statusCode = 500;
-  if (error instanceof Error && error.name === "ZodError") {
+  const errorName = error instanceof Error ? error.name : "";
+  const errorText = error instanceof Error ? error.message : "";
+  if (errorName === "ZodError") {
     // A bare ZodError serializes to just `ZodError` under workerd, so a 400 is
     // impossible to diagnose from the logs. Log the individual issues.
     const issues = (error as { issues?: unknown }).issues;
@@ -242,6 +244,16 @@ app.onError((error, c) => {
     );
     errorMessage =
       "Please check this endpoint's documentation for the correct request parameters.";
+    logError = false;
+    statusCode = 400;
+  } else if (
+    errorName === "SyntaxError" ||
+    (errorName === "TypeError" &&
+      /form ?data|json|body|parse/i.test(errorText))
+  ) {
+    // A request body that cannot be parsed as JSON/formData (malformed JSON,
+    // empty body, wrong Content-Type) is a client mistake, not a server fault.
+    errorMessage = "Malformed request body.";
     logError = false;
     statusCode = 400;
   }
