@@ -8,7 +8,8 @@
 
 import { fail } from "@ianlucas/cs2-lib";
 import { z } from "zod";
-import { getSession } from "./lib/session";
+import { getSession, getSessionId, SESSION_ID_KEY, type WorkerSession } from "./lib/session";
+import { createSession, isSessionLive } from "./lib/session-store";
 import { SteamOpenID, fetchSteamUserInput } from "./lib/steam";
 import { unauthorized } from "./lib/responses";
 import {
@@ -23,6 +24,16 @@ export async function getUserIdFromRequest(request: Request) {
   const session = await getSession(request.headers.get("cookie"));
   const userId = session.get("userId");
   if (typeof userId !== "string") {
+    return undefined;
+  }
+  // A valid HMAC is not enough: the payload is self-contained, so a cookie that
+  // was signed and then revoked (or has since expired server-side) would still
+  // verify. The `sid` row is what makes sign-out actually take effect.
+  const sid = getSessionId(session);
+  if (sid === undefined) {
+    return undefined;
+  }
+  if (!(await isSessionLive(sid))) {
     return undefined;
   }
   return userId;
@@ -44,10 +55,27 @@ export async function requireUser(request: Request) {
   return user;
 }
 
+/**
+ * Stamp a fresh revocation id into a session and persist it, so the cookie that
+ * is about to be committed names a row in `Session`.
+ *
+ * Every sign-in path must go through this. Re-using an existing `sid` would
+ * mean the previous cookie for the same browser also becomes revocable, which
+ * is fine, but signing in on a second device has to mint a *new* one so that
+ * signing out on the second device does not lock out the first.
+ */
+export async function startSession(session: WorkerSession): Promise<void> {
+  const userId = session.get("userId");
+  if (typeof userId !== "string") {
+    return;
+  }
+  session.set(SESSION_ID_KEY, await createSession(userId));
+}
+
 /** API strategy: ?token=<auth-token> → user (token consumed in the process). */
 export async function authenticateApi(request: Request) {
   const url = new URL(request.url);
-  const token = z.string().parse(url.searchParams.get("token"));
+  const token = z.string().min(1).max(128).parse(url.searchParams.get("token"));
   const { details, valid } = await getAuthTokenDetails(token);
   if (details === undefined) {
     fail("Invalid token.");

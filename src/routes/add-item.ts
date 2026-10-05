@@ -18,7 +18,7 @@ import {
   noContent,
   unauthorizedResponse
 } from "../lib/responses";
-import { clientInventoryItemShape } from "../lib/shapes";
+import { apiKeyShape, clientInventoryItemShape, userIdShape } from "../lib/shapes";
 
 export async function addItem(c: Context) {
   const request = c.req.raw;
@@ -28,9 +28,9 @@ export async function addItem(c: Context) {
   }
   const { apiKey, userId, inventoryItem } = z
     .object({
-      apiKey: z.string(),
+      apiKey: apiKeyShape,
       inventoryItem: clientInventoryItemShape,
-      userId: z.string()
+      userId: userIdShape
     })
     .parse(await request.json());
 

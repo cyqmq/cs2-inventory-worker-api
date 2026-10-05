@@ -2,5 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+.dev.vars.bak
+wrangler.jsonc.bak
 *.log
 .DS_Store

@@ -81,6 +81,17 @@ export interface GroupRuleRow {
   value: string;
 }
 
+export interface SessionRow {
+  /** Random per-session id, also carried inside the signed cookie payload. */
+  sid: string;
+  userId: string;
+  createdAt: number;
+  /** Server-side expiry; the cookie's Max-Age is not the only bound. */
+  expiresAt: number;
+  /** NULL while live. Stamped by sign-out, which is what actually revokes. */
+  revokedAt: number | null;
+}
+
 export interface RateLimitBucketRow {
   key: string;
   /** Remaining tokens, kept fractional between refills (upstream: Float). */
@@ -101,4 +112,5 @@ export interface Database {
   UserGroup: UserGroupRow;
   GroupRule: GroupRuleRow;
   RateLimitBucket: RateLimitBucketRow;
+  Session: SessionRow;
 }

@@ -20,6 +20,15 @@ export const nonNegativeInt = z.number().int().nonnegative().finite().safe();
 export const positiveInt = z.number().int().positive().finite().safe();
 export const nonNegativeFloat = z.number().nonnegative().finite();
 
+/**
+ * Identifiers that end up in a database key or a `LIKE` pattern. Steam IDs are
+ * 17 digits and Steam session/user ids are UUIDs, so 128 chars is generous;
+ * the bound exists so an anonymous caller cannot push megabyte-long strings
+ * into `RateLimitBucket.key` or force a full-table `LIKE`.
+ */
+export const userIdShape = z.string().min(1).max(128);
+export const apiKeyShape = z.string().min(1).max(256);
+
 export const optionalStickerOffset = z
   .number()
   .finite()

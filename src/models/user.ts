@@ -39,8 +39,17 @@ export async function upsertUser(user: {
   avatar: { medium: string };
   nickname: string;
   steamID: string;
+  /**
+   * Whether `nickname`/`avatar` came from Steam. When false they are fallbacks,
+   * and an existing profile is left untouched instead of being overwritten with
+   * "Player"/"" because a single Steam request failed. Defaults to true so
+   * callers that already hold a real profile (e.g. the Electron flow) keep the
+   * previous behaviour.
+   */
+  profileResolved?: boolean;
 }): Promise<string> {
   const now = Date.now();
+  const profileResolved = user.profileResolved ?? true;
   await db()
     .insertInto("User")
     .values({
@@ -55,11 +64,15 @@ export async function upsertUser(user: {
       updatedAt: now
     })
     .onConflict((oc) =>
-      oc.column("id").doUpdateSet({
-        avatar: user.avatar.medium,
-        name: user.nickname,
-        updatedAt: now
-      })
+      oc.column("id").doUpdateSet(
+        profileResolved
+          ? {
+              avatar: user.avatar.medium,
+              name: user.nickname,
+              updatedAt: now
+            }
+          : { updatedAt: now }
+      )
     )
     .execute();
   return user.steamID;

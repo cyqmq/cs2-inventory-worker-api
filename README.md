@@ -57,7 +57,8 @@ npm run dev
 | `STEAM_CALLBACK_URL` | ❌ | Steam OpenID 回调地址，默认 `http://localhost:8787/sign-in/steam/callback` |
 | `FRONTEND_URL` | ❌ | 前端 origin。设置后登录/偏好等回调 302 跳转到这里，并参与 CORS 白名单；未设置时跳回 `/` |
 | `CORS_ORIGINS` | ❌ | 逗号分隔的额外 CORS 允许 origin（超出 `FRONTEND_URL`） |
-| `TRUSTED_HOSTNAMES` | ❌ | 逗号分隔的可信 hostname（3D viewer origin 校验）。`localhost` / `127.0.0.1` 恒可信 |
+| `TRUSTED_HOSTNAMES` | ❌ | 逗号分隔的可信 hostname（3D viewer origin 校验）。**注意：`localhost` / `127.0.0.1` 不再由它控制**，见 `TRUST_LOCALHOST_ORIGINS` |
+| `TRUST_LOCALHOST_ORIGINS` | ❌ | 是否信任 `localhost` / `127.0.0.1` 的 CORS origin。`true` 无条件信任；`false` 永不信任；**未设置时只有 `FRONTEND_URL` 与 `CORS_ORIGINS` 都为空（纯本地 `wrangler dev`）才信任**。反射 loopback origin 会同时发 `Allow-Credentials: true`，等于让任何能在本机起 loopback 端口的进程带 cookie 读 API，所以部署环境默认收紧 |
 | `VIEWER_EMBED_URL` | ❌ | 3D 查看器嵌入地址，默认 `https://3d.cstrike.app/view` |
 | `VIEWER_ASSETS_BASE_URL` / `VIEWER_KEY` | ❌ | 查看器资源 CDN / API key |
 | `ASSETS_BASE_URL` | ❌ | 物品图片等静态资源 CDN 前缀 |
@@ -115,6 +116,11 @@ npm run deploy
 
 > `DB` binding 存在时用 D1；缺 `DB` 而有 `HYPERDRIVE` 时用 PostgreSQL。见 `src/db/database.ts`。
 
+> ⚠️ **两个方案的迁移都必须先于部署跑完**。当前 schema 到 `0003_session.sql`：
+> - `0002` 建 `RateLimitBucket`——不跑的话公开模式 spray/stattrak 和所有端点限流都会 500；
+> - `0003` 建 `Session`——不跑的话每个请求的会话存活校验会去查一张不存在的表，
+>   **线上所有已登录 session 立刻集体失效**。
+
 两套库共用同一张表结构（原始 Prisma 的 PascalCase 表名），`migrations/` 与 `migrations-pg/` 是同一
 schema 的 SQLite / PostgreSQL 两个方言版本。
 
@@ -124,20 +130,21 @@ schema 的 SQLite / PostgreSQL 两个方言版本。
 |------|------|------|------|
 | GET | `/healthz` | — | 健康检查（返回 `Supposedly healthy`） |
 | GET | `/api/init` | Cookie* | 客户端初始化数据（rules / preferences / user），含 `rules.viewer`（服务端 3D viewer 判定） |
-| POST | `/api/sign-in` | — | API Key 登录，失败/空 body 返回 400 |
-| GET | `/api/sign-in/callback` | — | Steam OAuth 回调（带 `id_res`/`code`） |
+| POST | `/api/sign-in` | — | API Key 登录，失败/空 body 返回 400。限流 30/min/客户端分片 |
+| GET | `/sign-out` | — | 登出：盖 `Session.revokedAt`（真正吊销）+ 用过期 cookie 覆盖 `_session`，302 → `FRONTEND_URL`/`/` |
+| GET | `/api/sign-in/callback` | — | Steam OAuth 回调（带 `id_res`/`code`）。限流 30/min/客户端分片 |
 | GET | `/sign-in/steam/callback` | — | Steam OpenID 回调入口（无参请求返回 302 跳转 Steam） |
-| GET | `/api/auth/electron` | ELECTRON_AUTH_SECRET | Electron 无头登录，返回 session cookie |
+| GET | `/api/auth/electron` | ELECTRON_AUTH_SECRET | Electron 无头登录，返回 session cookie。限流 10/min/客户端分片 |
 | GET | `/api/auth/electron-config` | ELECTRON_AUTH_SECRET | Electron 获取配置；无 secret 返回 400 |
 | POST | `/api/action/sync` | Session | 同步库存（增量动作列表，见 [sync 协议](#sync-协议)） |
 | GET | `/api/action/resync` | Session | 重新同步（返回最新 `syncedAt` + 库存 JSON） |
-| GET | `/api/action/reset-inventory` | Session | 重置库存（302 → `FRONTEND_URL`/`/`） |
+| GET/POST | `/api/action/reset-inventory` | Session | 重置库存（302 → `FRONTEND_URL`/`/`）。**GET/POST 都收**，两者都过 `assertSameOrigin()`（`Sec-Fetch-Site: cross-site` 或跨 origin → 403）；PUT/DELETE/PATCH → 405 |
 | POST | `/api/action/unlock-case` | Session | 开箱（需要 `keyUid`，见[开箱](#开箱)） |
-| POST | `/api/action/import-inspect-link` | Session | 导入检视链接（带速率限制，需登录） |
+| POST | `/api/action/import-inspect-link` | Session | 导入检视链接。限流 1/s/用户（持久化桶） |
 | GET/POST | `/api/action/preferences` | Session | 偏好表单（GET/POST 均 302 + Set-Cookie 写会话） |
-| GET | `/api/users` | API Key | 用户列表 |
-| GET | `/api/user/basic/:userId` | — | 公开；`{ avatar, name }`，用户不存在返回 `null` |
-| GET | `/api/user/:userId` | API Key | 获取单个用户 |
+| GET | `/api/users` | API Key | 用户列表。限流 60/min/api key |
+| GET | `/api/user/basic/:userId` | — | 公开；`{ avatar, name }`，用户不存在返回 `null`。限流 60/min/客户端分片 |
+| GET | `/api/user/:userId` | API Key | 获取单个用户。限流 60/min/api key |
 | POST | `/api/add-item` | API Key | 给用户库存加一件物品（204） |
 | POST | `/api/add-container` | API Key | 给用户库存加一个随机容器（返回容器 JSON） |
 | POST | `/api/increment-item-stattrak` | API Key 或公开规则 | StatTrak 计数 +1（204）；apiKey 可选，无 key 时需 `apiPublicStatTrakIncrement=true` + 令牌桶（50 容量/每 3.6s 回 1，超限 429），且物品须已装备 |
@@ -200,17 +207,67 @@ schema 的 SQLite / PostgreSQL 两个方言版本。
 
 ### 会话 Cookies
 
-- 会话是无状态 cookie：`_session=<b64url(JSON 用户数据)>.<HMAC-SHA256 签名>`，
-  `HttpOnly`、`Path=/`、`SameSite=Lax`（可覆盖）、`Max-Age` 接近永久。
+- Cookie 格式：`_session=<b64url(JSON payload)>.<b64url(HMAC-SHA256)签名)>`，
+  `HttpOnly`、`Path=/`、`SameSite=Lax`（可覆盖）、`Secure`（除非
+  `SESSION_SECURE_COOKIE=false`）、`Max-Age` 接近永久（≈68 年）。
+- **服务端有会话表，可以吊销**（迁移 `0003`，见 `src/lib/session-store.ts`）：
+  - payload 里带一个登录时铸造的 `sid`，因为 payload 有签名，客户端**伪造不了也换不了** `sid`；
+  - `getUserIdFromRequest` 每个请求校验 `sid` 是否存活。未知 / 已吊销 / 已过期一律 401；
+  - `/sign-out` 给该 `sid` 打 `revokedAt`，**下一个请求立刻失效**——不再依赖浏览器何时
+    肯配合删 cookie；
+  - 服务端硬过期 `SESSION_TTL_MS` = **30 天**。cookie 自己的 `Max-Age` 只是兼容保留，
+    真正的上限是表里的 `expiresAt`，客户端改不动。
+  - 登录不复用 `sid`：同一账号在第二台设备登录会插入**新行**，所以在 B 设备登出不会把
+    A 设备踢下线（登出是按 `sid` 精确吊销的）。
 - **与旧版（Express/Express-session 服务端 session）不兼容**：签名方案不同，
   升级后所有用户需要重新登录。
+- ⚠️ **`0003` 迁移必须先跑**：远程库没建 `Session` 表之前，`getUserIdFromRequest` 的存活
+  校验会查一张不存在的表 → **所有已登录 session 全部失效**（不是 500，是集体登出）。
+  D1 用 `npm run db:migrate:d1:remote`，PG 用 `npm run db:migrate:pg`。
 - `SESSION_SECURE_COOKIE=true`（默认）时 cookie 带 `Secure`，**本地 HTTP（`wrangler dev`）下
   浏览器会拒收**——本地开发请设为 `false`，生产 HTTPS 保持 `true`。
+
+### 速率限制
+
+限流**全部走数据库**（`RateLimitBucket` 表，迁移 `0002`），不是进程内存 Map——Worker isolate
+数量多且随时会被回收，内存 Map 的限流等于没有。
+
+| 端点 | 配额 | 桶键 |
+|------|------|------|
+| `/api/sign-in` | 30/min | 客户端分片 |
+| `/api/sign-in/callback` | 30/min | 客户端分片 |
+| `/api/auth/electron` | 10/min | 客户端分片 |
+| `/api/users` | 60/min | api key（SHA-256 截断） |
+| `/api/user/:userId` | 60/min | api key（SHA-256 截断） |
+| `/api/user/basic/:userId` | 60/min | 客户端分片 |
+| `/api/action/import-inspect-link` | 1/s | 用户 |
+| `/api/consume-item-spray`（公开模式） | 1/30s | `spray:{userId}:{uid}` |
+| `/api/increment-item-stattrak`（公开模式） | 50/3.6s | `stattrak:{userId}:{uid}` |
+
+**桶键必须有界**（`src/lib/rate-limit-key.ts`），这是硬约束，不是风格问题：桶是真实数据行，
+任何派生自请求元数据的键都是攻击者可控的，否则 N 个请求就能插 N 行——正是本仓库修过的一个
+存储 DoS。所以只有两种键来源：
+
+1. **凭据派生**——基数被现存凭据数量封顶。api key 走 SHA-256 截断，不存明文，
+   免得 `RateLimitBucket` 的备份变成一份可用凭据清单。
+2. **客户端 IP 分片**（256 片）——用于完全无需凭据的端点。伪造 `X-Forwarded-For` 只能挑到
+   一个**已经存在**的分片。
+
+代价是真实的：同分片的两个无关客户端共享配额，攻击者可以稀释正常用户的预算。但这仍然比
+"单个全局桶"好——后者能让一个攻击者把所有用户一起锁死。
+
+429 响应**没有 body**（`tooManyRequests = new Response(null, { status: 429 })`），与上游
+`responses.server.ts` 一致；前端按状态码映射文案（`craft-import-inspect-link.tsx:21`）。
+
+过期桶（`updatedAt` 超过 24h，此时它早已回满，删掉不可能多给配额）每 5 分钟最多清一次、
+每批 500 行，**await 而不是 detached**——留在响应之后的 promise 会一直占着 D1 写锁，
+把同 isolate 后续请求全堵死，表现就是无关端点莫名其妙地卡住。
 
 ### CORS
 
 - 白名单 = `FRONTEND_URL` + `CORS_ORIGINS`（精确 origin，去尾斜杠）+ `TRUSTED_HOSTNAMES`
-  （hostname 子域匹配），`localhost` / `127.0.0.1` 恒放行。
+  （hostname 子域匹配）。**`localhost` / `127.0.0.1` 改由 `TRUST_LOCALHOST_ORIGINS` 控制**
+  （默认：仅当没配任何前端 origin 时信任），不再是恒放行。
 - 允许方法 `GET, POST, OPTIONS`，允许头 `Content-Type, Authorization`，支持凭据
   （`Access-Control-Allow-Credentials: true`）。
 - 注意：Hono 4.13 的 `compose()` 只把 `Error` 实例交给 `onError`，`throw <Response>`
@@ -234,6 +291,34 @@ schema 的 SQLite / PostgreSQL 两个方言版本。
 TTL 状态机**：首次请求限时等待（catalog 1.5s）后返回，过期时 stale-while-revalidate 后台刷新。
 `reason` 名称、优先级顺序与 fail-closed 语义与上游一致；差异只在于冷启动后的第一个请求可能拿到
 `pending`，而不会像上游那样一直阻塞到探测成功。
+
+### ⚠️ SQL 必须同时在 SQLite 和 PostgreSQL 上成立
+
+D1 和 PostgreSQL 只共享**很小**一个 SQL 子集，而且分歧点往往在最顺手的地方。踩过的坑：
+
+**双参数标量 `MIN()`**。SQLite 有 `min(X, Y)` 标量形式，于是
+`MIN(tokens + refill, capacity)` 在本地 D1 上跑得好好的。但 PostgreSQL 的 `min()` 是
+**只接受一个参数的聚合函数**，`min(double precision, integer)` 根本不存在，也没有任何
+隐式转换路径能让它成立：
+
+```
+function min(double precision, integer) does not exist
+```
+
+结果是**每个限流请求在 Hyperdrive/Aiven 上必然 500**——而本地 D1 测试永远发现不了。
+`LEAST()` 是 PG 的答案但 SQLite 没有，`GREATEST()` 镜像问题同样存在。唯一两边都在的写法是
+`CASE WHEN ... > cap THEN cap ELSE ... END`（见 `token-bucket.ts` 的 `clampToCapacity`）。
+
+**教训**：验证脚本不要再手抄一份 SQL。`scripts/verify-token-bucket.ts` 现在直接从
+`src/lib/token-bucket.ts` 导入 `buildInsertBucket` / `buildConsumeToken` /
+`buildPruneSelect` / `buildPruneDelete`——手抄的副本当时还在测**已经被替换掉的 `MIN`**，
+正是这种漂移让 PG bug 溜过了评审。
+
+**`DELETE ... LIMIT`**：SQLite 里是编译期选项，PostgreSQL 直接语法错误。两处分批删除
+（`pruneExpiredBuckets`、`sweepSessions`）都改成"先 SELECT 出 key，再 `WHERE key IN (...)`"。
+
+**`LIKE` 的默认转义符**：SQLite 没有，PG 默认是 backslash。`users.ts` 显式写
+`ESCAPE '\'`，否则同一个查询在两个后端上通配符集合不一样。
 
 ### 语言回退为英文（`add-container`）
 
@@ -261,11 +346,25 @@ Workers 单脚本主包限额约 3MB（gzip）。若把前端逻辑合入此 Wor
 | `npm run db:seed:rules` | 打印规则种子 SQL（PG 用） |
 | `npm run db:seed:rules:d1:local` / `:remote` | 直接 seed 到 D1 |
 
+离线断言（不需要 `wrangler dev`）：
+
+| 命令 | 说明 |
+|------|------|
+| `npx tsx scripts/verify-v9-migration.ts` | 库存 v1→v2 迁移（6 断言） |
+| `npx tsx scripts/verify-token-bucket.ts` | 令牌桶 SQL + prune（22 断言）。**直接 import `token-bucket.ts` 里真正上线的那几个 builder**，不手抄副本 |
+
 冒烟脚本（开发期用，需要 `wrangler dev` 在 8787 运行且已造好测试 session）：
 
+- `scripts/smoke-spray-stattrak.mjs` — spray / stattrak 公开模式与令牌桶（19 断言）
+- `scripts/smoke-extra-actions.mjs` — 贴纸板/挂件包/钥匙扣等剩余 action（16 断言）
 - `scripts/smoke-sync.cjs` — sync 协议冒烟（空 sync、Add、批量 Add、409 守卫）
 - `scripts/smoke-actions.cjs` — 完整动作链路（resync、reset-inventory、preferences、
   容器+钥匙同步、unlock-case、equipped v5）
+
+> 脚本认 `SMOKE_BASE` 环境变量（默认 `http://127.0.0.1:8787`）。
+>
+> ⚠️ 不要在 `wrangler dev` 运行时并行跑 `wrangler d1 execute --local`——两者抢同一个
+> `.wrangler/state`，会把 workerd 打成 crash。需要查库就先停 dev。
 
 ## 目录结构
 
@@ -273,20 +372,25 @@ Workers 单脚本主包限额约 3MB（gzip）。若把前端逻辑合入此 Wor
 src/
 ├── index.ts                 Hono 入口：CORS 中间件、路由注册、404/onError
 ├── env.ts                   Env 接口 + 请求级 setRuntime/getRuntime
-├── auth.ts                  会话 cookie 校验 / 用户提取
+├── auth.ts                  会话 cookie 校验（含 Session 表存活校验）/ 用户提取
 ├── middleware.ts            请求中间件（尾斜杠/尾点、economy 加载、库存迁移、touchLastSeen）
 ├── db/                      Kysely 实例（D1 / Hyperdrive 自动切换）+ 表类型
 ├── models/                  user / rule / user-preference / user-cache / api-credential / migrate-inventory
-├── lib/                     shapes（zod）、economy-loader、responses、redirect、session、equipped-v4/v5、rate-limiter、csfloat
+├── lib/                     shapes（zod）、economy-loader、responses、redirect、session、
+│                            session-store（吊销/过期）、token-bucket（持久化限流）、
+│                            rate-limit-key（有界桶键）、equipped-v4/v5、csfloat
 ├── preferences/             language / background 解析
 ├── routes/                  actions / add-container / add-item / electron / healthz /
 │                            increment-item-stattrak / init / inventory / preferences /
-│                            sign-in / steam-callback / user / users
+│                            sign-in / sign-out / steam-callback / user / users
 └── data/                    items.ts（generate-economy-data.ts 生成）
-migrations/                   D1 (SQLite) schema
+migrations/                   D1 (SQLite) schema —— 0002 限流桶 / 0003 Session
 migrations-pg/               PostgreSQL 同一 schema（不同方言）
-scripts/                     generate-economy-data / apply-migrations-pg / seed-rules / smoke-*
+scripts/                     generate-economy-data / apply-migrations-pg / seed-rules /
+                             verify-*（离线断言）/ smoke-*
 ```
+
+> `migrations/` 与 `migrations-pg/` 是同一 schema 的两个方言版本，**改一处必须同步另一处**。
 
 ## 技术栈
 

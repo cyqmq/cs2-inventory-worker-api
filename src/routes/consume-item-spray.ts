@@ -29,7 +29,7 @@ import {
   tooManyRequests,
   unauthorizedResponse
 } from "../lib/responses";
-import { nonNegativeInt } from "../lib/shapes";
+import { apiKeyShape, nonNegativeInt, userIdShape } from "../lib/shapes";
 
 export async function consumeItemSpray(c: Context) {
   const request = c.req.raw;
@@ -39,11 +39,18 @@ export async function consumeItemSpray(c: Context) {
   }
   const { apiKey, userId, targetUid } = z
     .object({
-      apiKey: z.string().optional(),
-      userId: z.string(),
+      apiKey: apiKeyShape.optional(),
+      userId: userIdShape,
       targetUid: nonNegativeInt
     })
     .parse(await request.json());
+
+  // Existence first: consuming a token writes a RateLimitBucket row keyed by
+  // the caller-supplied userId, so doing it before this check let anonymous
+  // callers fill the table with buckets for users that do not exist.
+  if (!(await existsUser(userId))) {
+    throw badRequest;
+  }
 
   if (apiKey !== undefined) {
     if (!(await isApiKeyValid(apiKey, [API_SCOPE, SPRAY_CONSUME_SCOPE]))) {
@@ -61,10 +68,6 @@ export async function consumeItemSpray(c: Context) {
     ) {
       throw tooManyRequests;
     }
-  }
-
-  if (!(await existsUser(userId))) {
-    throw badRequest;
   }
 
   try {

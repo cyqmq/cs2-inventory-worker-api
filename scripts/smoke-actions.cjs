@@ -33,7 +33,10 @@ async function main() {
 
   // GET endpoints (resync returns JSON; reset-inventory redirects 302 -> /).
   await req("GET resync", "GET", "/api/action/resync");
-  await req("GET reset-inventory", "GET", "/api/action/reset-inventory");
+  // resync returns JSON. reset-inventory is POST-only now (state-changing GET
+  // is CSRF-able); it redirects 302 -> /. A GET must be rejected with 405.
+  await req("GET reset-inventory (must 405)", "GET", "/api/action/reset-inventory");
+  await req("POST reset-inventory", "POST", "/api/action/reset-inventory");
 
   const form = new FormData();
   form.set("language", "schinese");
@@ -72,15 +75,32 @@ async function main() {
 
   const inv = await (await fetch(`${base}/api/inventory/${steamId}.json`, { headers: { Cookie: cookie } })).json();
   console.log("\ninventory:", JSON.stringify(inv.items));
-  const caseUid = Number(Object.keys(inv.items || {})[0]);
-  console.log("caseUid:", caseUid, "is container:", Boolean(inv.items && inv.items[caseUid]));
+  // Pick the uids by item id, not by position: Object.keys(...)[0] is whatever
+  // the inventory happens to start with (often a skin), and unlockContainer()
+  // on a non-container throws -> 500.
+  const uidOf = (id) => {
+    for (const [uid, item] of Object.entries(inv.items || {})) {
+      if (item.id === id) return Number(uid);
+    }
+    return undefined;
+  };
+  const caseUid = uidOf(9129);
+  const keyUid = uidOf(9507);
+  console.log("caseUid:", caseUid, "keyUid:", keyUid);
+  if (caseUid === undefined || keyUid === undefined) {
+    throw new Error("container 9129 / key 9507 missing from inventory");
+  }
 
   const unlocked = await req("POST unlock-case", "POST", "/api/action/unlock-case", {
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ caseUid, keyUid: caseUid + 1, syncedAt })
+    body: JSON.stringify({ caseUid, keyUid, syncedAt })
   });
   if (unlocked) {
     console.log("unlockedItem keys:", Object.keys(unlocked));
+    if (!unlocked.unlockedItem || !unlocked.unlockedItem.id) {
+      throw new Error("unlock-case did not return an unlockedItem");
+    }
+    console.log("unlocked item id:", unlocked.unlockedItem.id);
   }
 
   // Equipped v5 should now render the stored items' base shape.

@@ -7,7 +7,10 @@ import type { Context } from "hono";
 import { getRuntime } from "../env";
 import { middleware } from "../middleware";
 import { upsertUser } from "../models/user";
+import { startSession } from "../auth";
 import { badRequest, methodNotAllowed } from "../lib/responses";
+import { clientShardKey } from "../lib/rate-limit-key";
+import { ELECTRON_AUTH_RATE_LIMIT, enforceRateLimit } from "../lib/token-bucket";
 import { commitSession, getSession } from "../lib/session";
 
 export async function electronAuth(c: Context) {
@@ -16,6 +19,15 @@ export async function electronAuth(c: Context) {
   if (request.method !== "GET") {
     throw methodNotAllowed;
   }
+  // This mints a session and can create a user row, so it is the most valuable
+  // unauthenticated target in the app: the only thing standing between an
+  // attacker and a stream of sessions is knowledge of ELECTRON_AUTH_SECRET.
+  // Throttled on the client shard so the bucket table cannot be grown by
+  // rotating addresses.
+  await enforceRateLimit(
+    clientShardKey(request, "electron-auth"),
+    ELECTRON_AUTH_RATE_LIMIT
+  );
   const { searchParams } = new URL(request.url);
   const steamId = searchParams.get("steamId");
   const secret = searchParams.get("secret");
@@ -33,6 +45,7 @@ export async function electronAuth(c: Context) {
   });
   const session = await getSession(request.headers.get("cookie"));
   session.set("userId", userId);
+  await startSession(session);
 
   return c.json({
     sessionCookie: await commitSession(session)

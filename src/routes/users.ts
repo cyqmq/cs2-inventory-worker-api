@@ -5,16 +5,39 @@
  *  name/id is replaced with a portable LIKE filter that works identically on D1
  *  (SQLite) and PostgreSQL. The highest-priority group per user is computed with
  *  a single join instead of Prisma's nested `take: 1` include.
+ *
+ *  Two things the LIKE port has to handle itself, because the values are
+ *  parameterized and therefore never interpreted as SQL but *are* interpreted
+ *  as a LIKE pattern:
+ *    - `page` must be a non-negative integer. `Number("abc")` is NaN and
+ *      `Number("1e309")` is Infinity, which Kysely happily passes to OFFSET and
+ *      the driver rejects (500); a negative value is silently clamped to 0 by
+ *      SQLite but *rejected* by PostgreSQL, so the same request would behave
+ *      differently on the two supported backends.
+ *    - `%` and `_` are LIKE metacharacters. Unescaped, `search=%` matches every
+ *      user and `search=_` matches any single character, turning the endpoint
+ *      into a full-table scan on demand.
  *--------------------------------------------------------------------------------------------*/
 
 import type { Context } from "hono";
 import type { ExpressionBuilder } from "kysely";
+import { sql } from "kysely";
 import { z } from "zod";
 import { db } from "../db/database";
 import type { Database } from "../db/types";
 import { middleware, isValidApiRequest } from "../middleware";
 import { API_SCOPE } from "../models/api-credential";
 import { methodNotAllowed } from "../lib/responses";
+import { credentialKey } from "../lib/rate-limit-key";
+import {
+  USER_SEARCH_RATE_LIMIT,
+  enforceRateLimit
+} from "../lib/token-bucket";
+
+/** Escapes the LIKE metacharacters; the ESCAPE clause is spelled out below. */
+function escapeLike(value: string) {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
 
 export async function users(c: Context) {
   const request = c.req.raw;
@@ -23,18 +46,31 @@ export async function users(c: Context) {
     throw methodNotAllowed;
   }
   await isValidApiRequest(request, [API_SCOPE]);
+  // Keyed on the api key, not the caller: the endpoint is credential-gated, so
+  // the bucket cardinality is bounded by the number of keys rather than by
+  // however many addresses are hitting it. Done before the query so a search
+  // loop is throttled rather than served.
+  await enforceRateLimit(
+    await credentialKey(request, "users"),
+    USER_SEARCH_RATE_LIMIT
+  );
   const url = new URL(request.url);
   const page = z
     .string()
-    .transform((value) => Number(value))
+    .regex(/^\d{1,9}$/)
+    .transform((value) => Number.parseInt(value, 10))
     .parse(url.searchParams.get("page") ?? "0");
   const search = z
     .string()
-    .parse(url.searchParams.get("search") ?? "")
-    // @see https://github.com/prisma/prisma/issues/8939#issuecomment-933990947
-    .replace(/[\s\n\t]/g, "_");
+    .max(128)
+    .parse(url.searchParams.get("search") ?? "");
   const take = 10;
-  const like = `%${search}%`;
+  // Order matters: escape the user's own `%`/`_`/`\` first, *then* apply the
+  // upstream whitespace normalization. Doing it the other way round would escape
+  // the `_` this line deliberately introduces and silently turn "type a space,
+  // match any single character" into "type a space, match a literal underscore".
+  // @see https://github.com/prisma/prisma/issues/8939#issuecomment-933990947
+  const like = `%${escapeLike(search).replace(/[\s\n\t]/g, "_")}%`;
 
   let countQuery = db()
     .selectFrom("User")
@@ -43,8 +79,14 @@ export async function users(c: Context) {
     .selectFrom("User")
     .select(["avatar", "id", "name", "updatedAt"]);
   if (search.length > 0) {
+    // ESCAPE is explicit because SQLite's LIKE has no default escape character
+    // while PostgreSQL's defaults to a backslash, so relying on either backend's
+    // default would silently change which characters are wildcards.
     const where = (eb: ExpressionBuilder<Database, "User">) =>
-      eb.or([eb("name", "like", like), eb("id", "like", like)]);
+      eb.or([
+        sql<boolean>`"name" LIKE ${like} ESCAPE '\\'`,
+        sql<boolean>`"id" LIKE ${like} ESCAPE '\\'`
+      ]);
     countQuery = countQuery.where(where);
     resultsQuery = resultsQuery.where(where);
   }

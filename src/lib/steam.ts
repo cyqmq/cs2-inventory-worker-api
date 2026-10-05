@@ -8,12 +8,66 @@
 
 import { getRuntime } from "../env";
 
+/**
+ * Steam endpoints are flaky in practice: the OpenID verification POST and the
+ * profile lookup occasionally answer 5xx or stall (a known local proxy used for
+ * the demo intermittently returns 502/504), and a single failure used to abort
+ * the whole sign-in — or silently downgrade the profile to "Player" with no
+ * avatar. Retrying a bounded number of times with a short backoff turns those
+ * transient failures into a slow-but-successful sign-in.
+ */
+const STEAM_FETCH_ATTEMPTS = 3;
+const STEAM_FETCH_TIMEOUT_MS = 20_000;
+const STEAM_RETRY_BASE_DELAY_MS = 400;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `fetch` with a per-attempt timeout and bounded retries for transient
+ * failures. Network errors, timeouts and 5xx responses are retried; any other
+ * response (including 4xx) is returned to the caller unchanged, so callers keep
+ * their own status handling (e.g. 403/429 rate-limit messaging).
+ */
+async function fetchSteamWithRetry(
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < STEAM_FETCH_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await sleep(STEAM_RETRY_BASE_DELAY_MS * attempt);
+    }
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(STEAM_FETCH_TIMEOUT_MS)
+      });
+      if (response.status >= 500 && attempt < STEAM_FETCH_ATTEMPTS - 1) {
+        lastError = new Error(`Steam responded HTTP ${response.status}.`);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /** Fetch the user's Steam profile. Falls back to defaults when the summary is
  *  unavailable (bad key, rate limit, private profile) so sign-in still works. */
 export interface SteamUserInput {
   steamID: string;
   nickname: string;
   avatar: { medium: string };
+  /**
+   * False when the summary lookup failed and `nickname`/`avatar` are the
+   * fallbacks below. Callers must not overwrite an already-known profile with a
+   * fallback, otherwise a transient Steam failure renames a user to "Player".
+   */
+  profileResolved: boolean;
 }
 
 export async function fetchSteamUserInput(steamId: string): Promise<SteamUserInput> {
@@ -28,9 +82,7 @@ export async function fetchSteamUserInput(steamId: string): Promise<SteamUserInp
       );
       url.searchParams.set("key", apiKey);
       url.searchParams.set("steamids", steamId);
-      const response = await fetch(url.toString(), {
-        signal: AbortSignal.timeout(15_000)
-      });
+      const response = await fetchSteamWithRetry(url.toString());
       if (response.ok) {
         const body = (await response.json()) as {
           response?: { players?: { steamid: string; personaname?: string; avatarmedium?: string }[] };
@@ -44,7 +96,8 @@ export async function fetchSteamUserInput(steamId: string): Promise<SteamUserInp
   return {
     steamID: steamId,
     nickname: player?.personaname ?? "Player",
-    avatar: { medium: player?.avatarmedium ?? "" }
+    avatar: { medium: player?.avatarmedium ?? "" },
+    profileResolved: player !== undefined
   };
 }
 
@@ -131,7 +184,7 @@ export class SteamOpenID {
   }
 
   async sendVerificationRequest(params: URLSearchParams) {
-    const response = await fetch(SteamOpenID.SERVER, {
+    const response = await fetchSteamWithRetry(SteamOpenID.SERVER, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",

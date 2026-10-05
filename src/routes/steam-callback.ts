@@ -11,7 +11,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { Context } from "hono";
-import { authenticateSteam } from "../auth";
+import { authenticateSteam, startSession } from "../auth";
 import { middleware } from "../middleware";
 import { methodNotAllowed } from "../lib/responses";
 import { frontendRedirect } from "../lib/redirect";
@@ -33,12 +33,18 @@ export async function steamCallback(c: Context) {
     }
     const session = await getSession(request.headers.get("cookie"));
     session.set("userId", result.userId);
+    await startSession(session);
     return frontendRedirect("/api/action/preferences", 307, {
       "Set-Cookie": await commitSession(session)
     });
   } catch (error) {
     if (error instanceof Response) {
       throw error;
+    }
+    // DIAG: capture the real exception that wrangler's "internal error" swallows.
+    console.error("[steamCallback] ERROR", error);
+    if (error instanceof Error && error.stack) {
+      console.error("[steamCallback] STACK", error.stack);
     }
     return frontendRedirect("/", 302);
   }

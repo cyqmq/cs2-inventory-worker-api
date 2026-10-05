@@ -22,8 +22,18 @@ FRONTEND_URL=
 CORS_ORIGINS=
 
 # Comma separated hostnames trusted for the 3D viewer origin check (dev/staging).
-# "localhost" and "127.0.0.1" are always trusted.
+# Note: this no longer controls "localhost"/"127.0.0.1" — see TRUST_LOCALHOST_ORIGINS below.
 TRUSTED_HOSTNAMES=
+
+# Whether to trust "localhost"/"127.0.0.1" CORS origins.
+#   unset  -> trust loopback ONLY when neither FRONTEND_URL nor CORS_ORIGINS is set
+#             (i.e. a pure local `wrangler dev` setup). Deployed environments get
+#             loopback blocked, because reflecting a loopback origin also sends
+#             Access-Control-Allow-Credentials: true, which would let any process
+#             that can bind a loopback port read the API with the user's cookies.
+#   true   -> always trust loopback (use when a local frontend runs on another port)
+#   false  -> never trust loopback
+TRUST_LOCALHOST_ORIGINS=
 
 # 3D viewer settings (optional).
 VIEWER_EMBED_URL=https://3d.cstrike.app/view

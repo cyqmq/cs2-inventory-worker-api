@@ -17,6 +17,8 @@ import { isValidApiRequest } from "../middleware";
 import { API_SCOPE } from "../models/api-credential";
 import { getUserBasicData } from "../models/user";
 import { methodNotAllowed } from "../lib/responses";
+import { clientShardKey, credentialKey } from "../lib/rate-limit-key";
+import { PUBLIC_READ_RATE_LIMIT, enforceRateLimit } from "../lib/token-bucket";
 
 export async function user(c: Context) {
   const request = c.req.raw;
@@ -25,6 +27,12 @@ export async function user(c: Context) {
     throw methodNotAllowed;
   }
   await isValidApiRequest(request, [API_SCOPE]);
+  // Credential-gated endpoint, so the bucket is keyed on the api key (hashed) and
+  // cannot be grown by rotating source addresses.
+  await enforceRateLimit(
+    await credentialKey(request, "user"),
+    PUBLIC_READ_RATE_LIMIT
+  );
   const userId = c.req.param("userId");
   if (userId === undefined) {
     return c.json(null);
@@ -54,6 +62,13 @@ export async function userBasic(c: Context) {
   if (request.method !== "GET") {
     throw methodNotAllowed;
   }
+  // Deliberately unauthenticated (see the file header), which makes this the one
+  // user-scoped read an anonymous caller can loop over. Shard-keyed so the bucket
+  // table stays bounded no matter how many addresses are used to do it.
+  await enforceRateLimit(
+    clientShardKey(request, "user-basic"),
+    PUBLIC_READ_RATE_LIMIT
+  );
   const userId = c.req.param("userId");
   if (userId === undefined) {
     return c.json(null);

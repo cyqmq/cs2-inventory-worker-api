@@ -110,7 +110,10 @@ import {
 } from "../lib/shapes";
 import { CS2_STICKER_OFFSET_FACTOR, isValidInspectLink, keychainOffsetFactor } from "../lib/economy";
 import { fetchCSFloatItemInfo } from "../lib/csfloat";
-import { RateLimiter } from "../lib/rate-limiter";
+import {
+  IMPORT_INSPECT_LINK_RATE_LIMIT,
+  enforceRateLimit
+} from "../lib/token-bucket";
 
 export const ApiActionSyncUrl = "/api/action/sync";
 export const ApiActionResyncUrl = "/api/action/resync";
@@ -755,14 +758,57 @@ type ApiActionResyncData = {
   inventory: string | null;
 };
 
+/**
+ * Same-origin guard for cookie-authenticated mutations that a cross-site page
+ * could otherwise trigger. The session cookie is `SameSite=Lax`, which blocks
+ * cross-site fetches and form posts but *not* a top-level GET navigation — so a
+ * state-changing GET (the historical reset-inventory) is reachable from any
+ * page via `<a href>` / `window.open` / `location =`.
+ *
+ * Browsers always send `Sec-Fetch-Site` on navigations and subrequests;
+ * `cross-site` is the only value that means "this came from another origin".
+ * Requests without the header are non-browser clients (curl, Electron's
+ * net.fetch) and are allowed through so the API stays scriptable.
+ */
+export function assertSameOrigin(request: Request): void {
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site !== null && site !== "same-origin" && site !== "none") {
+    throw forbiddenResponse;
+  }
+  const origin = request.headers.get("Origin");
+  if (origin === null || origin === "null") {
+    return;
+  }
+  if (origin !== new URL(request.url).origin) {
+    throw forbiddenResponse;
+  }
+}
+
 export async function resetInventory(c: Context) {
   const request = c.req.raw;
   await middleware(request);
-  if (request.method !== "GET") {
+  // Both verbs are accepted. Upstream's `GET /reset-inventory` is a plain link
+  // target, and the frontend's error boundary POSTs, so rejecting GET would be
+  // a gratuitous behavioural break for a GET that `assertSameOrigin` already
+  // gates.
+  //
+  // That gate is weaker for GET than it looks, and the residual exposure is
+  // accepted rather than papered over: a *top-level navigation* GET carries
+  // `Sec-Fetch-Site: cross-site`, which is rejected, but a browser that omits
+  // `Sec-Fetch-Site` (any pre-~2022 Chromium, all Gecko before 90) also omits
+  // `Origin` on a navigation, and both headers being absent passes. On such a
+  // client an `<img>`/`<a>` from a third-party page can still wipe the
+  // inventory. Callers that care should POST.
+  if (request.method !== "POST" && request.method !== "GET") {
     throw methodNotAllowed;
   }
+  assertSameOrigin(request);
   const { id: userId } = await requireUser(request);
-  await updateUserInventory(userId, new CS2Inventory().stringify());
+  await updateUserInventory(
+    userId,
+    new CS2Inventory().stringify(),
+    CS2_INVENTORY_VERSION
+  );
   return frontendRedirect("/", 302);
 }
 
@@ -812,8 +858,6 @@ export async function unlockCase(c: Context) {
   } satisfies ApiActionUnlockCaseActionData);
 }
 
-const importInspectLinkRateLimiter = new RateLimiter(1000);
-
 function postParseInventoryItem(item: CS2BaseInventoryItem) {
   if (item.keychains !== undefined) {
     for (const keychain of Object.values(item.keychains)) {
@@ -854,10 +898,15 @@ export async function importInspectLink(c: Context) {
   if (!(await craftAllowImportInspectLink.for(userId).get())) {
     throw badRequest;
   }
-  if (importInspectLinkRateLimiter.isLimited(userId)) {
-    throw tooManyRequests;
-  }
-  importInspectLinkRateLimiter.consume(userId);
+  // Persistent bucket rather than the old in-memory cooldown map: a Workers
+  // isolate can be evicted at any moment, so the 1s cooldown silently stopped
+  // applying under load, and it never applied at all to the Hyperdrive backend
+  // where isolates recycle much faster. Keyed on userId, so bucket cardinality is
+  // bounded by the user count.
+  await enforceRateLimit(
+    `import-inspect-link:${userId}`,
+    IMPORT_INSPECT_LINK_RATE_LIMIT
+  );
   const { inspectLink } = z
     .object({
       inspectLink: z.string().refine((value) => isValidInspectLink(value))

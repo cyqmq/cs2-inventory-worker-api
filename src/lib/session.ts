@@ -10,6 +10,12 @@
  *
  *  Cookie attributes: Path=/; HttpOnly; SameSite=Lax (or SESSION_COOKIE_SAMESITE);
  *  Max-Age=2147483647; Secure enabled unless SESSION_SECURE_COOKIE === "false".
+ *
+ *  Revocation: the payload carries a `sid` minted at sign-in and checked against
+ *  the `Session` table (migration 0003, see lib/session-store.ts). Without it the
+ *  blob is self-contained and therefore unrevocable. `MAX_AGE` above is the
+ *  cookie's own expiry and stays effectively "never" for compatibility; the
+ *  server-side bound is `SESSION_TTL_MS` in session-store.ts.
  *--------------------------------------------------------------------------------------------*/
 
 import { getRuntime } from "../env";
@@ -86,6 +92,18 @@ async function importHmacKey(secret: string, usages: KeyUsageLiteral[]) {
   );
 }
 
+/** Key under which the revocation id is stored inside the signed payload. */
+export const SESSION_ID_KEY = "sid";
+
+/**
+ * The revocation id carried by a session, or undefined for a cookie that has
+ * none (issued before migration 0003, or cleared).
+ */
+export function getSessionId(session: WorkerSession): string | undefined {
+  const sid = session.get(SESSION_ID_KEY);
+  return typeof sid === "string" && sid !== "" ? sid : undefined;
+}
+
 export async function getSession(cookieHeader: string | undefined | null) {
   const empty = createView({});
   if (!cookieHeader) {
@@ -128,41 +146,43 @@ export async function getSession(cookieHeader: string | undefined | null) {
   }
 }
 
+/** Cookie attributes shared by commit/destroy, so signing out really clears. */
+function sessionCookieAttributes(maxAge: number) {
+  const { env } = getRuntime();
+  const secure = (env.SESSION_SECURE_COOKIE ?? "").toLowerCase() !== "false";
+  const sameSite = env.SESSION_COOKIE_SAMESITE ?? "Lax";
+  const attributes = [
+    "Path=/",
+    "HttpOnly",
+    `SameSite=${sameSite}`,
+    `Max-Age=${maxAge}`
+  ];
+  if (secure) {
+    attributes.push("Secure");
+  }
+  return attributes;
+}
+
 export async function commitSession(session: WorkerSession) {
   const { env } = getRuntime();
   const payload = new TextEncoder().encode(JSON.stringify(session.data));
   const key = await importHmacKey(env.SESSION_SECRET, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, payload);
   const value = `${bytesToB64Url(payload)}.${bytesToB64Url(new Uint8Array(signature))}`;
-  const secure =
-    (env.SESSION_SECURE_COOKIE ?? "").toLowerCase() !== "false";
-  const sameSite = env.SESSION_COOKIE_SAMESITE ?? "Lax";
-  const attributes = [
+  return [
     `${SESSION_COOKIE_NAME}=${value}`,
-    "Path=/",
-    "HttpOnly",
-    `SameSite=${sameSite}`,
-    `Max-Age=${MAX_AGE}`
-  ];
-  if (secure) {
-    attributes.push("Secure");
-  }
-  return attributes.join("; ");
+    ...sessionCookieAttributes(MAX_AGE)
+  ].join("; ");
 }
 
 export async function destroySession(_session?: WorkerSession) {
-  const secure =
-    (getRuntime().env.SESSION_SECURE_COOKIE ?? "").toLowerCase() !== "false";
-  const attributes = [
+  // Same attribute set as commitSession (minus the value): a browser only
+  // replaces the cookie when Path / SameSite / Secure match, so dropping
+  // SameSite here would silently leave the old cookie in place.
+  return [
     `${SESSION_COOKIE_NAME}=`,
-    "Path=/",
-    "HttpOnly",
-    "Max-Age=0"
-  ];
-  if (secure) {
-    attributes.push("Secure");
-  }
-  return attributes.join("; ");
+    ...sessionCookieAttributes(0)
+  ].join("; ");
 }
 
 export function assignToSession(

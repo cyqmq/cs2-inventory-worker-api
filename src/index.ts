@@ -11,6 +11,7 @@ import { getRuntime, setRuntime, type Env } from "./env";
 import { healthz } from "./routes/healthz";
 import { init } from "./routes/init";
 import { signIn, signInCallback } from "./routes/sign-in";
+import { signOut } from "./routes/sign-out";
 import { steamCallback } from "./routes/steam-callback";
 import { electronAuth, electronConfig } from "./routes/electron";
 import { users } from "./routes/users";
@@ -62,8 +63,16 @@ function originAllowedFor(origin: string, env: Env): boolean {
   } catch {
     return false;
   }
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
-    return true;
+  // Loopback origins are trusted only when the deployment opts in. Reflecting
+  // them unconditionally would let *any* process that can bind a loopback port
+  // on the victim's machine (a malicious postinstall script, another Electron
+  // app, a stray dev server) read the API with the victim's cookies, because
+  // the reflected origin is sent with Allow-Credentials: true. Dev convenience
+  // is not worth that in a deployment, so it is an explicit switch.
+  if (localhostOriginsTrusted(env)) {
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return true;
+    }
   }
   const trusted = (env.TRUSTED_HOSTNAMES ?? "")
     .split(",")
@@ -93,6 +102,37 @@ function allowedOriginHeader(c: { req: { header(name: string): string | undefine
   return originAllowedFor(origin, getRuntime().env) ? origin : undefined;
 }
 
+/**
+ * Loopback CORS origins are trusted when TRUST_LOCALHOST_ORIGINS is "true",
+ * or when the deployment named no frontend at all (a local `wrangler dev`
+ * setup, where the Vite proxy/frontend and the API share 127.0.0.1 anyway).
+ */
+export function localhostOriginsTrusted(env: Env): boolean {
+  const explicit = (env.TRUST_LOCALHOST_ORIGINS ?? "").trim().toLowerCase();
+  if (explicit === "true") {
+    return true;
+  }
+  if (explicit === "false") {
+    return false;
+  }
+  const hasConfiguredFrontend =
+    (env.FRONTEND_URL ?? "").trim().length > 0 ||
+    (env.CORS_ORIGINS ?? "").trim().length > 0;
+  return !hasConfiguredFrontend;
+}
+
+/**
+ * Baseline hardening for every response. `no-store` matters most on the
+ * user-scoped routes (/api/init, /api/action/*, /api/user/*): they carry
+ * per-session data and must never be written to a shared cache.
+ */
+function applySecurityHeaders(headers: Headers) {
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Cache-Control", "no-store");
+}
+
 app.use("*", async (c, next) => {
   if (c.req.method === "OPTIONS") {
     const origin = allowedOriginHeader(c);
@@ -100,6 +140,7 @@ app.use("*", async (c, next) => {
     if (origin !== undefined) {
       applyCorsHeaders(headers, origin);
     }
+    applySecurityHeaders(headers);
     return c.newResponse(null, { status: 204, headers });
   }
   let res: Response;
@@ -121,6 +162,7 @@ app.use("*", async (c, next) => {
   if (origin !== undefined) {
     applyCorsHeaders(res.headers, origin);
   }
+  applySecurityHeaders(res.headers);
   return res;
 });
 
@@ -134,6 +176,7 @@ app.all("/api/init", init);
 app.all("/api/sign-in", signIn);
 app.all("/api/sign-in/callback", signInCallback);
 app.all("/sign-in/steam/callback", steamCallback);
+app.all("/sign-out", signOut);
 app.all("/api/auth/electron", electronAuth);
 app.all("/api/auth/electron-config", electronConfig);
 app.all("/api/users", users);
@@ -190,7 +233,13 @@ app.onError((error, c) => {
   let logError = true;
   let statusCode = 500;
   if (error instanceof Error && error.name === "ZodError") {
-    console.log(error);
+    // A bare ZodError serializes to just `ZodError` under workerd, so a 400 is
+    // impossible to diagnose from the logs. Log the individual issues.
+    const issues = (error as { issues?: unknown }).issues;
+    console.log(
+      "[ZodError] ",
+      issues !== undefined ? JSON.stringify(issues) : error
+    );
     errorMessage =
       "Please check this endpoint's documentation for the correct request parameters.";
     logError = false;

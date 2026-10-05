@@ -19,6 +19,7 @@ import {
 import { findUniqueUser, manipulateUserInventory } from "../models/user";
 import { getEnglishItemName } from "../lib/economy-loader";
 import { badRequest, methodNotAllowed, unauthorizedResponse } from "../lib/responses";
+import { apiKeyShape, userIdShape } from "../lib/shapes";
 import { random } from "../lib/misc";
 
 export async function addContainer(c: Context) {
@@ -38,13 +39,13 @@ export async function addContainer(c: Context) {
     weapon
   } = z
     .object({
-      apiKey: z.string(),
+      apiKey: apiKeyShape,
       graffiti: z.boolean().optional(),
-      language: z.string().optional(),
-      name: z.string().optional(),
+      language: z.string().max(64).optional(),
+      name: z.string().max(128).optional(),
       souvenir: z.boolean().optional(),
       stickerCapsule: z.boolean().optional(),
-      userId: z.string(),
+      userId: userIdShape,
       weapon: z.boolean().optional()
     })
     .parse(await request.json());

@@ -30,6 +30,12 @@ export interface Env {
   FRONTEND_URL?: string;
   /** Extra CORS origins (comma separated). */
   CORS_ORIGINS?: string;
+  /**
+   * "true"/"false" pins whether loopback origins (localhost / 127.0.0.1) are
+   * reflected by the CORS check. Unset means: trust them only when no frontend
+   * origin is configured at all (plain local `wrangler dev`).
+   */
+  TRUST_LOCALHOST_ORIGINS?: string;
   /** Comma separated hostnames trusted for the 3D viewer origin check. */
   TRUSTED_HOSTNAMES?: string;
 
