@@ -6,7 +6,7 @@
 import type { WorkerSession } from "../lib/session";
 import { backgroundValues } from "../lib/backgrounds";
 
-export const defaultBackground = "sirocco_night";
+export const defaultBackground = "gradient-night";
 
 export function isValidBackground(background: string) {
   if (background.length === 0) {
