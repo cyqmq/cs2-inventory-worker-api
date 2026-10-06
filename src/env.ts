@@ -54,6 +54,18 @@ export interface Env {
   SESSION_SECURE_COOKIE?: string;
   /** Overrides the session cookie SameSite attribute (defaults to "Lax"). */
   SESSION_COOKIE_SAMESITE?: string;
+
+  /**
+   * Default item/UI language when the user has no stored preference. Must be
+   * one of the supported language names (e.g. "schinese", "english"). Invalid
+   * values are ignored and the country/IP-derived fallback is used instead.
+   */
+  DEFAULT_LANGUAGE?: string;
+  /**
+   * Comma-separated subset of supported languages exposed in the language
+   * picker. Unset means all languages are available.
+   */
+  ENABLED_LANGUAGES?: string;
 }
 
 interface Runtime {

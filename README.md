@@ -61,6 +61,8 @@ npm run dev
 | `TRUSTED_HOSTNAMES` | ❌ | 逗号分隔的可信 hostname（3D viewer origin 校验）。**注意：`localhost` / `127.0.0.1` 不再由它控制**，见 `TRUST_LOCALHOST_ORIGINS` |
 | `TRUST_LOCALHOST_ORIGINS` | ❌ | 是否信任 `localhost` / `127.0.0.1` 的 CORS origin。`true` 无条件信任；`false` 永不信任；**未设置时只有 `FRONTEND_URL` 与 `CORS_ORIGINS` 都为空（纯本地 `wrangler dev`）才信任**。反射 loopback origin 会同时发 `Allow-Credentials: true`，等于让任何能在本机起 loopback 端口的进程带 cookie 读 API，所以部署环境默认收紧 |
 | `ADMIN_API_TOKEN` | ❌ | `GET /api/admin/stats` 的 Bearer token。未设置时管理接口返回 403（仪表盘禁用）；设置后请求需带 `Authorization: Bearer <token>`，否则 401 |
+| `DEFAULT_LANGUAGE` | ❌ | 默认语言（如 `schinese`、`english`）。用户没有已保存的语言偏好时使用；非法值忽略，回退 IP 国家推导。未设置时保持按 `CF-IPCountry` 推导 |
+| `ENABLED_LANGUAGES` | ❌ | 逗号分隔的可用语言子集（如 `english,schinese`）。未设置时语言选择器显示全部 29 种语言 |
 | `VIEWER_EMBED_URL` | ❌ | 3D 查看器嵌入地址，默认 `https://3d.cstrike.app/view` |
 | `VIEWER_ASSETS_BASE_URL` / `VIEWER_KEY` | ❌ | 查看器资源 CDN / API key |
 | `ASSETS_BASE_URL` | ❌ | 物品图片等静态资源 CDN 前缀 |

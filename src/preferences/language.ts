@@ -31,11 +31,13 @@ function getLangFromLanguage(name: string) {
 
 export async function getLanguage(
   session: WorkerSession,
-  ipCountry: string | null
+  ipCountry: string | null,
+  defaultLanguage?: string | null
 ) {
   const country = (ipCountry || (await appCountry.get())).toLowerCase();
   const language =
     (session.get("language") as string | null | undefined) ||
+    defaultLanguage ||
     getLanguageFromCountry(country);
   return {
     lang: getLangFromLanguage(language),
