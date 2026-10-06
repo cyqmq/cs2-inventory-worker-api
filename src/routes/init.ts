@@ -8,13 +8,14 @@
 import type { Context } from "hono";
 import { findRequestUser } from "../auth";
 import { middleware } from "../middleware";
-import { getClientRules, steamCallbackUrl } from "../models/rule";
+import { getClientRules } from "../models/rule";
 import { getBackground } from "../preferences/background";
 import { getLanguage } from "../preferences/language";
 import { getToggleable } from "../preferences/toggleable";
 import { getSession } from "../lib/session";
 import { nonEmptyString } from "../lib/misc";
 import { getRuntime } from "../env";
+import { resolveSteamCallbackUrl } from "../lib/steam";
 import { resolveViewerRuntime } from "../lib/viewer";
 import { getUserPreferences } from "../models/user-preference";
 import { languages } from "../lib/languages";
@@ -34,7 +35,7 @@ export async function init(c: Context) {
   const user = await findRequestUser(request);
   const ipCountry = request.headers.get("CF-IPCountry");
   const { origin: appUrl, host: appSiteName } = new URL(
-    await steamCallbackUrl.get()
+    resolveSteamCallbackUrl(request)
   );
   const clientRules = await getClientRules(user?.id);
   const viewer = await resolveViewerRuntime({

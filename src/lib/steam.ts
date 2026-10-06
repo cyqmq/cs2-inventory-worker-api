@@ -9,6 +9,80 @@
 import { getRuntime } from "../env";
 
 /**
+ * Fallback used when no Steam callback URL can be derived from the request
+ * (see resolveSteamCallbackUrl). Matches the upstream default.
+ */
+const DEFAULT_STEAM_CALLBACK_URL = "http://localhost/sign-in/steam/callback";
+
+/**
+ * Hostnames the Steam OpenID callback may safely use when deriving the
+ * callback URL from the request's Host header. Loopback covers local dev; the
+ * preview suffix covers this deployment's public preview domains; FRONTEND_URL
+ * and TRUSTED_HOSTNAMES extend it for configured deployments.
+ */
+export function isTrustedSteamHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (lower === "localhost" || lower === "127.0.0.1" || lower === "::1") {
+    return true;
+  }
+  const env = getRuntime().env;
+  const candidates = new Set<string>();
+  if (env.FRONTEND_URL !== undefined && env.FRONTEND_URL.trim().length > 0) {
+    try {
+      candidates.add(new URL(env.FRONTEND_URL).hostname.toLowerCase());
+    } catch {
+      // Ignore malformed FRONTEND_URL.
+    }
+  }
+  for (const entry of (env.TRUSTED_HOSTNAMES ?? "").split(",")) {
+    const trimmed = entry.trim().toLowerCase();
+    if (trimmed.length > 0) {
+      candidates.add(trimmed);
+    }
+  }
+  for (const candidate of candidates) {
+    if (lower === candidate) {
+      return true;
+    }
+    if (lower.endsWith(candidate.startsWith(".") ? candidate : `.${candidate}`)) {
+      return true;
+    }
+  }
+  return lower.endsWith(".monkeycode-ai.online");
+}
+
+/**
+ * Resolves the Steam OpenID return URL for a request.
+ *
+ * An explicitly configured STEAM_CALLBACK_URL always wins. Otherwise the URL is
+ * derived from the request's Host header (trusted hostnames only), so the
+ * callback follows whatever public domain the frontend proxy forwards — the
+ * preview domain changes without touching any config file. Deriving from Host
+ * is safe because only trusted hostnames are accepted; an arbitrary Host header
+ * falls back to the default.
+ */
+export function resolveSteamCallbackUrl(request: Request): string {
+  const configured = getRuntime().env.STEAM_CALLBACK_URL?.trim();
+  if (configured !== undefined && configured.length > 0) {
+    return configured;
+  }
+  const hostHeader =
+    request.headers.get("X-Forwarded-Host") ?? request.headers.get("host");
+  if (hostHeader === null) {
+    return DEFAULT_STEAM_CALLBACK_URL;
+  }
+  const hostname = hostHeader.startsWith("[")
+    ? hostHeader.slice(1, hostHeader.indexOf("]"))
+    : hostHeader.split(":")[0];
+  if (isTrustedSteamHostname(hostname)) {
+    const protocol =
+      hostname === "localhost" || hostname === "127.0.0.1" ? "http" : "https";
+    return `${protocol}://${hostHeader}/sign-in/steam/callback`;
+  }
+  return DEFAULT_STEAM_CALLBACK_URL;
+}
+
+/**
  * Steam endpoints are flaky in practice: the OpenID verification POST and the
  * profile lookup occasionally answer 5xx or stall (a known local proxy used for
  * the demo intermittently returns 502/504), and a single failure used to abort

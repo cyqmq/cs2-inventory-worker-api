@@ -10,14 +10,13 @@ import { fail } from "@ianlucas/cs2-lib";
 import { z } from "zod";
 import { getSession, getSessionId, SESSION_ID_KEY, type WorkerSession } from "./lib/session";
 import { createSession, isSessionLive } from "./lib/session-store";
-import { SteamOpenID, fetchSteamUserInput } from "./lib/steam";
+import { SteamOpenID, fetchSteamUserInput, resolveSteamCallbackUrl } from "./lib/steam";
 import { unauthorized } from "./lib/responses";
 import {
   clearAuthTokens,
   clearExpiredAuthTokens,
   getAuthTokenDetails
 } from "./models/api-auth-token";
-import { steamCallbackUrl } from "./models/rule";
 import { findUniqueUser, upsertUser } from "./models/user";
 
 export async function getUserIdFromRequest(request: Request) {
@@ -90,7 +89,7 @@ export async function authenticateApi(request: Request) {
 
 /** Steam strategy: validates the OpenID callback or returns the auth URL. */
 export async function authenticateSteam(request: Request) {
-  const returnUrl = await steamCallbackUrl.get();
+  const returnUrl = resolveSteamCallbackUrl(request);
   const steamOpenID = new SteamOpenID(returnUrl, request);
   if (steamOpenID.shouldValidate()) {
     const userID = await steamOpenID.validate();
