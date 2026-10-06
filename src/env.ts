@@ -38,6 +38,11 @@ export interface Env {
   TRUST_LOCALHOST_ORIGINS?: string;
   /** Comma separated hostnames trusted for the 3D viewer origin check. */
   TRUSTED_HOSTNAMES?: string;
+  /**
+   * Bearer token required by GET /api/admin/stats. When unset the endpoint
+   * returns 403 (admin dashboard disabled).
+   */
+  ADMIN_API_TOKEN?: string;
 
   ASSETS_BASE_URL?: string;
   VIEWER_ASSETS_BASE_URL?: string;

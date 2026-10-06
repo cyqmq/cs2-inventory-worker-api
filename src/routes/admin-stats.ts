@@ -3,18 +3,61 @@
  *
  *  Admin dashboard data: aggregate usage counters, per-route API call counts,
  *  per-day call volumes, and every user with a decoded summary of their
- *  inventory items. No authentication is enforced yet — this is a development
- *  tool for self-hosted/preview deployments. Gate it behind an admin token
- *  before exposing the Worker publicly.
+ *  inventory items. Gated behind `ADMIN_API_TOKEN` (bearer token); the endpoint
+ *  returns 403 when the token is not configured and 401 on an invalid token.
  *--------------------------------------------------------------------------------------------*/
 
 import type { Context } from "hono";
+import { getRuntime } from "../env";
 import { db } from "../db/database";
 import { middleware } from "../middleware";
 import { getEnglishItemName } from "../lib/economy-loader";
-import { methodNotAllowed } from "../lib/responses";
+import {
+  forbiddenResponse,
+  methodNotAllowed,
+  unauthorizedResponse
+} from "../lib/responses";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Constant-time string comparison (length leak is acceptable for a bearer
+ * token). `crypto.subtle.timingSafeEqual` is unavailable in workerd for
+ * arbitrary byte lengths, so the XOR-accumulate variant is used instead.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  if (aBytes.length !== bBytes.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < aBytes.length; i++) {
+    diff |= aBytes[i] ^ bBytes[i];
+  }
+  return diff === 0;
+}
+
+/**
+ * Gates /api/admin/stats behind a bearer token. The endpoint exposes every
+ * user's Steam id, profile and inventory, so it must not be reachable by
+ * anonymous callers on a public deployment. When `ADMIN_API_TOKEN` is unset the
+ * dashboard is disabled outright.
+ */
+function assertAdminAuthorized(request: Request): void {
+  const token = getRuntime().env.ADMIN_API_TOKEN?.trim();
+  if (token === undefined || token.length === 0) {
+    throw forbiddenResponse;
+  }
+  const authHeader = request.headers.get("Authorization");
+  const provided =
+    authHeader?.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length).trim()
+      : (request.headers.get("X-Admin-Token") ?? "").trim();
+  if (provided.length === 0 || !timingSafeEqual(provided, token)) {
+    throw unauthorizedResponse;
+  }
+}
 
 function summarizeInventory(rawInventory: string | null) {
   if (rawInventory === null || rawInventory.trim().length === 0) {
@@ -58,6 +101,7 @@ export async function adminStats(c: Context) {
   if (request.method !== "GET") {
     throw methodNotAllowed;
   }
+  assertAdminAuthorized(request);
 
   const now = Date.now();
   const last24h = now - DAY_MS;
