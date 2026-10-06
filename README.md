@@ -15,6 +15,7 @@
 
 - [快速开始（本地开发）](#快速开始本地开发)
 - [环境变量](#环境变量)
+- [Steam 回调地址](#steam-回调地址)
 - [部署](#部署)
 - [API 端点](#api-端点)
 - [与前端 / Electron 集成](#与前端--electron-集成)
@@ -54,7 +55,7 @@ npm run dev
 | `SESSION_SECRET` | ✅ | 签名 `_session` cookie（HMAC-SHA256）。用 `crypto.randomUUID() + crypto.randomUUID()` 生成 |
 | `ELECTRON_AUTH_SECRET` | ✅ | 与 Electron 客户端约定的认证密钥 |
 | `STEAM_API_KEY` | ❌ | Steam Web API 密钥（可用规则 `steamApiKey` 覆盖；Steam 登录需要真实 key） |
-| `STEAM_CALLBACK_URL` | ❌ | Steam OpenID 回调地址，默认 `http://localhost:8787/sign-in/steam/callback` |
+| `STEAM_CALLBACK_URL` | ❌ | Steam OpenID 回调地址。**留空时自动推导**：从 `X-Forwarded-Host` / `Host` 取当前访问域名，仅信任 `localhost` / `127.0.0.1`、`FRONTEND_URL`、`TRUSTED_HOSTNAMES`、`*.monkeycode-ai.online`。设置后显式值优先，等价于关闭自动推导（详见[Steam 回调地址](#steam-回调地址)） |
 | `FRONTEND_URL` | ❌ | 前端 origin。设置后登录/偏好等回调 302 跳转到这里，并参与 CORS 白名单；未设置时跳回 `/` |
 | `CORS_ORIGINS` | ❌ | 逗号分隔的额外 CORS 允许 origin（超出 `FRONTEND_URL`） |
 | `TRUSTED_HOSTNAMES` | ❌ | 逗号分隔的可信 hostname（3D viewer origin 校验）。**注意：`localhost` / `127.0.0.1` 不再由它控制**，见 `TRUST_LOCALHOST_ORIGINS` |
@@ -73,6 +74,28 @@ npm run dev
 
 `steamCallbackUrl`、`steamApiKey`、`viewerKey` 三个规则走 env 回退，`seed-rules` 会**跳过**它们——
 在 `Rule` 表里插一条会遮蔽 env 值，与原版行为保持一致。
+
+## Steam 回调地址
+
+Steam OpenID 登录需要把浏览器跳回一个**公网可达**的回调地址。后端按以下优先级解析：
+
+1. `STEAM_CALLBACK_URL` 非空 → 直接使用（显式配置永远优先，**等价于关闭自动推导**）。
+2. 留空 → 从请求的 `X-Forwarded-Host`（代理注入）或 `Host` 头自动推导，但**只信任**：
+   - `localhost` / `127.0.0.1`
+   - `FRONTEND_URL` 的 hostname
+   - `TRUSTED_HOSTNAMES` 条目
+   - `*.monkeycode-ai.online`（本平台预览域名）
+3. 都不满足 → 回退 `http://localhost/sign-in/steam/callback`。
+
+前端（Vite preview 代理与 Pages Functions）会把浏览器原始域名通过
+`X-Forwarded-Host` / `X-Forwarded-Proto` 透传给后端，因此**预览域名变化时无需改配置**。
+
+**自托管 / frp 反向代理建议**：
+
+- 最可靠：直接设置 `STEAM_CALLBACK_URL=https://你的公网域名/sign-in/steam/callback`，不依赖转发头。
+- 想用自动推导：把公网域名加进 `TRUSTED_HOSTNAMES`（或设 `FRONTEND_URL`），并保证 frp 不启用
+  `host_header_rewrite`（默认不启用，Host 原样透传）。
+- 由于显式配置优先于自动推导，**不需要额外的开关变量**。
 
 ## 部署
 
