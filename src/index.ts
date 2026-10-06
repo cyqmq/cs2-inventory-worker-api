@@ -29,6 +29,8 @@ import {
   unlockCase
 } from "./routes/actions";
 import { preferences } from "./routes/preferences";
+import { adminStats } from "./routes/admin-stats";
+import { insertRequestLog } from "./models/request-log";
 
 export const app = new Hono();
 
@@ -163,6 +165,15 @@ app.use("*", async (c, next) => {
     applyCorsHeaders(res.headers, origin);
   }
   applySecurityHeaders(res.headers);
+  try {
+    await insertRequestLog({
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+      status: res.status
+    });
+  } catch {
+    // Best-effort telemetry; a logging failure must not break the request.
+  }
   return res;
 });
 
@@ -194,6 +205,7 @@ app.all("/api/action/reset-inventory", resetInventory);
 app.all("/api/action/unlock-case", unlockCase);
 app.all("/api/action/import-inspect-link", importInspectLink);
 app.all("/api/action/preferences", preferences);
+app.all("/api/admin/stats", adminStats);
 app.all("/api/inventory/*", inventory);
 app.all("/api/equipped/v4/*", equippedV4);
 app.all("/api/equipped/v5/*", equippedV5);

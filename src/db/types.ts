@@ -1,3 +1,4 @@
+import type { Generated } from "kysely";
 /*---------------------------------------------------------------------------------------------
  *  CS2 Inventory Simulator — database row types
  *
@@ -100,6 +101,18 @@ export interface RateLimitBucketRow {
   updatedAt: number;
 }
 
+export interface RequestLogRow {
+  /** Auto-increment primary key. */
+  id: Generated<number>;
+  method: string;
+  path: string;
+  status: number;
+  /** NULL for anonymous requests. */
+  userId: string | null;
+  /** Unix epoch milliseconds. */
+  createdAt: number;
+}
+
 export interface Database {
   User: UserRow;
   UserCache: UserCacheRow;
@@ -113,4 +126,5 @@ export interface Database {
   GroupRule: GroupRuleRow;
   RateLimitBucket: RateLimitBucketRow;
   Session: SessionRow;
+  RequestLog: RequestLogRow;
 }
